@@ -22,6 +22,7 @@ class HallucinationChecker(BaseFilter):
         job: JobPosting,
         source: ResumeSource,
     ) -> FilterResult:
-        result = await detect_hallucinations(optimized, source)
-        result.threshold = self.threshold
+        result = await detect_hallucinations(optimized, source, no_shame=self.no_shame)
+        if not self.no_shame:
+            result.threshold = self.threshold
         return result

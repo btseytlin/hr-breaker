@@ -30,7 +30,7 @@ def _load_resume_guide() -> str:
     return guide_path.read_text()
 
 
-OPTIMIZER_PROMPT = r"""
+OPTIMIZER_BASE = r"""
 You are a resume optimization expert. Extract content from user's resume and create an optimized HTML resume for a job posting.
 
 INPUT: The user's resume text (any format).
@@ -43,21 +43,13 @@ CONTENT RULES:
 - Feature keywords matching job requirements IF they exist in the original resume. You can add umbrella terms if relevant (e.g. if user was making transformer LLM models you can add "NLP")
 - Prioritize and highlight experiences most relevant to the role
 - If going over the one page limit: remove unrelated content to save space.
-- Remove obvious skills (Excel, VS Code, Jupyter, GitHub, Jira) unless specifically required.
+- Remove obvious skills (Excel, VS Code, Jupyter, GitHub, Jira) unless specifically required by the job or very relevant fot it.
 - Exclude: location, language proficiency, age, hobbies unless required by job posting.
 - Add a summary section highlighting the most relevant experiences.
 - Try to preserve the original writing style if possible.
 - Avoid leaving an empty space at the bottom of the page if you have useful content to fill.
 
-STRICT RULES - NEVER VIOLATE:
-1. NEVER add specific technologies, products, or platforms not in original (e.g. "Amazon Bedrock", "LangChain", "Pinecone")
-2. NEVER fabricate job titles, companies, degrees, certifications, or achievements
-3. NEVER invent metrics or numbers not in original
-4. DO NOT drop work experience or achievements (publications, patents, awards, etc.) unless they decrease fit
-5. Never use the em dash symbol, the word "delve" or other common markers of LLM-generated text.
-6. NEVER add <script> tags
-7. You CAN use <style> tags if you need custom styling beyond the provided classes
-8. Do not cut critical content (like work experience, education, etc) if you can cut something else (like summary)
+{content_rules}
 
 CONTENT BUDGET:
 - Target: ~500 words, ~4000 characters (these are rough estimates, actual fit depends on formatting)
@@ -75,18 +67,50 @@ OPTIONAL TOOLS (use when helpful):
 - check_keywords_tool(html) - Returns missing job keywords ranked by TF-IDF importance. Use if unsure about keyword coverage.
 - validate_structure(html) - Check HTML has proper headers/sections. Use after major structural changes.
 
-ALLOWED:
-- General/umbrella terms inferable from context: "NLP" if they did text processing, "SQL" if they used databases
-- Rephrasing metrics with same values: "1% - 10%" -> "1-10%" is fine
-- Reordering and emphasizing existing content
-- Using content that is commented out and making it visible
-
 LINKS:
 - Preserve contacts info as in the original and never delete it
-- Preserve all URLs from the original resume (email, LinkedIn, GitHub, website, project links)
+- Preserve URLs from the original resume (email, LinkedIn, GitHub, website, project links)
 - Use full URLs (include https://) for all links
 
 {resume_guide}
+"""
+
+OPTIMIZER_STRICT_RULES = """
+ALLOWED:
+- You CAN add related technologies plausible from context (e.g. Python user likely knows pip, venv; React user likely knows npm, webpack)
+- General/umbrella terms inferable from context: "NLP" if they did text processing, "SQL" if they used databases
+- Rephrasing metrics with same values: "1% - 10%" -> "1-10%"
+- Reordering and emphasizing existing content
+- Using content that is commented out and making it visible
+- You CAN use <style> tags if you need custom styling beyond the provided classes 
+
+STRICT RULES - NEVER VIOLATE:
+- Only add specific technologies, products, or platforms not in original (e.g. "Amazon Bedrock", "LangChain", "Pinecone") they can be justified (user has experience with PostgreSQL -> maybe they are familiar with MySQL too) and ONLY IF there is no other way to increase fit 
+- NEVER fabricate job titles, companies, degrees, certifications, or achievements
+- NEVER invent metrics, numbers and achievements not in original
+- DO NOT drop work experience or achievements (publications, patents, awards, etc.) unless they decrease fit
+- Never use the em dash symbol, the word "delve" or other common markers of LLM-generated text.
+- NEVER add <script> tags
+- Do not cut critical content (like work experience, education, etc) if you can cut something else (like summary)
+"""
+
+OPTIMIZER_LENIENT_RULES = """
+ALLOWED:
+- You CAN add related technologies plausible from context (e.g. Python user likely knows pip, venv; React user likely knows npm, webpack)
+- You CAN extrapolate skills from adjacent experience
+- You CAN make light assumptions about the candidate
+- General/umbrella terms inferable from context: "NLP" if they did text processing, "SQL" if they used databases
+- Rephrasing metrics with same values: "1% - 10%" -> "1-10%"
+- Reordering and emphasizing existing content
+- Using content that is commented out and making it visible
+- You CAN use <style> tags if you need custom styling beyond the provided classes 
+
+STRICT RULES - NEVER VIOLATE:
+- NEVER fabricate job titles, companies, degrees, certifications, or achievements
+- NEVER invent metrics, numbers and achievements not in original
+- Never use the em dash symbol, the word "delve" or other common markers of LLM-generated text.
+- NEVER add <script> tags
+- Do not cut critical content (like work experience, education, etc) if you can cut something else (like summary)
 """
 
 
@@ -95,11 +119,16 @@ class OptimizerResult(BaseModel):
     changes: list[str]
 
 
-def get_optimizer_agent(job: JobPosting, source: ResumeSource) -> Agent:
+def get_optimizer_agent(
+    job: JobPosting, source: ResumeSource, no_shame: bool = False
+) -> Agent:
     """Create optimizer agent with job/source context for filter tools."""
     settings = get_settings()
     resume_guide = _load_resume_guide()
-    system_prompt = OPTIMIZER_PROMPT.format(resume_guide=resume_guide)
+    content_rules = OPTIMIZER_LENIENT_RULES if no_shame else OPTIMIZER_STRICT_RULES
+    system_prompt = OPTIMIZER_BASE.format(
+        content_rules=content_rules, resume_guide=resume_guide
+    )
     agent = Agent(
         f"google-gla:{settings.gemini_pro_model}",
         output_type=OptimizerResult,
@@ -139,7 +168,10 @@ def get_optimizer_agent(job: JobPosting, source: ResumeSource) -> Agent:
             "estimates": {
                 "chars": est.chars,
                 "words": est.words,
-                "limits": {"chars": settings.resume_max_chars, "words": settings.resume_max_words},
+                "limits": {
+                    "chars": settings.resume_max_chars,
+                    "words": settings.resume_max_words,
+                },
                 "note": "Character/word counts are rough estimates, page_count is authoritative",
             },
         }
@@ -197,6 +229,7 @@ async def optimize_resume(
     source: ResumeSource,
     job: JobPosting,
     context: IterationContext,
+    no_shame: bool = False,
 ) -> OptimizedResume:
     """Optimize resume for job posting."""
     prompt = f"""## Original Resume:
@@ -244,7 +277,7 @@ Return JSON with:
 Output ONLY valid JSON. The html field should contain the raw HTML string.
 """
 
-    agent = get_optimizer_agent(job, source)
+    agent = get_optimizer_agent(job, source, no_shame=no_shame)
     result = await agent.run(prompt)
     return OptimizedResume(
         html=result.output.html,

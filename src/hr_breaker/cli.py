@@ -28,6 +28,7 @@ OUTPUT_DIR = Path("output")
 @click.option("--max-iterations", "-n", type=int, default=None)
 @click.option("--debug", "-d", is_flag=True, help="Save all iterations as PDFs to output/debug/")
 @click.option("--seq", "-s", is_flag=True, help="Run filters sequentially (default: parallel)")
+@click.option("--no-shame", is_flag=True, help="Lenient mode: allow aggressive content stretching")
 def optimize(
     resume_path: Path,
     job_input: str,
@@ -35,6 +36,7 @@ def optimize(
     max_iterations: int | None,
     debug: bool,
     seq: bool,
+    no_shame: bool,
 ):
     """Optimize resume for job posting.
 
@@ -88,7 +90,8 @@ def optimize(
             debug_dir = pdf_storage.generate_debug_dir(job.company, job.title)
 
         mode = "sequential" if seq else "parallel"
-        click.echo(f"Optimizing (mode: {mode})...")
+        shame_mode = " [no-shame]" if no_shame else ""
+        click.echo(f"Optimizing (mode: {mode}{shame_mode})...")
 
         source = ResumeSource(
             content=resume_content,
@@ -97,7 +100,7 @@ def optimize(
         )
         optimized, validation, _ = await optimize_for_job(
             source, max_iterations=max_iterations, on_iteration=on_iteration, job=job,
-            parallel=not seq
+            parallel=not seq, no_shame=no_shame
         )
         return first_name, last_name, source, optimized, validation, job
 

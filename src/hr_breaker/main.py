@@ -8,12 +8,10 @@ import streamlit as st
 
 nest_asyncio.apply()
 
-# Create a persistent event loop for the session
+# Event loop setup
 if "event_loop" not in st.session_state:
     st.session_state.event_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(st.session_state.event_loop)
-else:
-    asyncio.set_event_loop(st.session_state.event_loop)
+asyncio.set_event_loop(st.session_state.event_loop)
 
 from hr_breaker.agents import extract_name, parse_job_posting
 from hr_breaker.config import get_settings
@@ -48,7 +46,7 @@ def cached_extract_name(content: str) -> tuple[str | None, str | None]:
     return run_async(extract_name(content))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def cached_parse_job(text: str):
     """Cached job parsing by job text hash."""
     return run_async(parse_job_posting(text))
@@ -75,6 +73,7 @@ with st.sidebar:
     st.markdown("**Options**")
     sequential_mode = st.checkbox("Sequential", value=False, help="Run filters sequentially with early exit")
     debug_mode = st.checkbox("Debug", value=False, help="Save each iteration PDF")
+    no_shame_mode = st.checkbox("No Shame", value=False, help="Lenient mode: allow aggressive content stretching")
     max_iterations = st.number_input("Max iterations", min_value=1, max_value=10, value=settings.max_iterations)
 
     st.divider()
@@ -153,7 +152,7 @@ with col_resume:
         with st.expander("Preview", expanded=False):
             st.text(src.content)
     else:
-        resume_method = st.radio("", ["Upload", "Paste"], horizontal=True, key="resume_method", label_visibility="collapsed")
+        resume_method = st.radio("Resume input method", ["Upload", "Paste"], horizontal=True, key="resume_method", label_visibility="collapsed")
 
         resume_content = None
         if resume_method == "Upload":
@@ -207,7 +206,7 @@ with col_job:
         with st.expander("Preview", expanded=False):
             st.text(job_text)
     else:
-        job_input_method = st.radio("", ["URL", "Paste"], horizontal=True, key="job_method", label_visibility="collapsed")
+        job_input_method = st.radio("Job input method", ["URL", "Paste"], horizontal=True, key="job_method", label_visibility="collapsed")
 
         if job_input_method == "URL":
             job_url = st.text_input("Job URL", label_visibility="collapsed", placeholder="https://...")
@@ -237,84 +236,97 @@ with col_job:
                 st.rerun()
 
 # Optimize button
-can_optimize = has_resume and has_job
+is_running = st.session_state.get("optimization_running", False)
+can_optimize = has_resume and has_job and not is_running
 btn_help = None
 if not has_resume:
     btn_help = "Need resume"
 elif not has_job:
     btn_help = "Need job posting"
+elif is_running:
+    btn_help = "Optimization in progress"
 clicked = st.button("🚀 Optimize", disabled=not can_optimize, use_container_width=True, help=btn_help)
 
 if clicked:
     source = st.session_state["source_resume"]
+    st.session_state["optimization_running"] = True
+    error_occurred = None
 
-    with st.spinner("Parsing job posting..."):
-        job = cached_parse_job(job_text)
+    try:
+        with st.spinner("Parsing job posting..."):
+            job = cached_parse_job(job_text)
 
-    # Setup debug dir if enabled
-    debug_dir = None
-    if debug_mode:
-        debug_dir = pdf_storage.generate_debug_dir(job.company, job.title)
+        # Setup debug dir if enabled
+        debug_dir = None
+        if debug_mode:
+            debug_dir = pdf_storage.generate_debug_dir(job.company, job.title)
 
-    progress = st.progress(0)
-    status = st.empty()
-    status.write("Starting optimization...")
+        # Store iteration results for session state
+        iteration_results = []
 
-    # Store iteration results for session state
-    iteration_results = []
+        with st.status("Optimizing resume...", expanded=True) as status_container:
+            def on_iteration(i, opt, val):
+                iteration_results.append((i, opt, val))
+                status_container.update(label=f"Iteration {i + 1}/{max_iterations}")
+                status_container.write(f"Iteration {i + 1} complete")
 
-    def on_iteration(i, opt, val):
-        iteration_results.append((i, opt, val))
-        progress.progress((i + 1) / max_iterations)
-        status.write(f"Iteration {i + 1}/{max_iterations}")
+                # Save debug files if enabled
+                if debug_mode and debug_dir:
+                    if opt.html:
+                        (debug_dir / f"iteration_{i + 1}.html").write_text(opt.html)
+                    if opt.pdf_bytes:
+                        (debug_dir / f"iteration_{i + 1}.pdf").write_bytes(opt.pdf_bytes)
 
-        # Save debug files if enabled
-        if debug_mode and debug_dir:
-            if opt.html:
-                (debug_dir / f"iteration_{i + 1}.html").write_text(opt.html)
-            if opt.pdf_bytes:
-                (debug_dir / f"iteration_{i + 1}.pdf").write_bytes(opt.pdf_bytes)
+            optimized, validation, job = run_async(
+                optimize_for_job(
+                    source,
+                    job_text,
+                    max_iterations=max_iterations,
+                    on_iteration=on_iteration,
+                    job=job,
+                    parallel=not sequential_mode,
+                    no_shame=no_shame_mode,
+                )
+            )
+            status_container.update(label="Optimization complete", state="complete")
 
-    optimized, validation, job = run_async(
-        optimize_for_job(
-            source,
-            job_text,
-            max_iterations=max_iterations,
-            on_iteration=on_iteration,
-            job=job,
-            parallel=not sequential_mode,
-        )
-    )
+        # Save PDF and store results in session state
+        pdf_path = None
+        if optimized and optimized.pdf_bytes:
+            pdf_path = pdf_storage.generate_path(
+                source.first_name, source.last_name, job.company, job.title
+            )
+            pdf_path.parent.mkdir(parents=True, exist_ok=True)
+            pdf_path.write_bytes(optimized.pdf_bytes)
 
-    # Save PDF and store results in session state
-    pdf_path = None
-    if optimized and optimized.pdf_bytes:
-        pdf_path = pdf_storage.generate_path(
-            source.first_name, source.last_name, job.company, job.title
-        )
-        pdf_path.parent.mkdir(parents=True, exist_ok=True)
-        pdf_path.write_bytes(optimized.pdf_bytes)
+            pdf_record = GeneratedPDF(
+                path=pdf_path,
+                source_checksum=source.checksum,
+                company=job.company,
+                job_title=job.title,
+                first_name=source.first_name,
+                last_name=source.last_name,
+            )
+            pdf_storage.save_record(pdf_record)
 
-        pdf_record = GeneratedPDF(
-            path=pdf_path,
-            source_checksum=source.checksum,
-            company=job.company,
-            job_title=job.title,
-            first_name=source.first_name,
-            last_name=source.last_name,
-        )
-        pdf_storage.save_record(pdf_record)
+        # Store in session state for persistent display
+        st.session_state["last_result"] = {
+            "optimized": optimized,
+            "validation": validation,
+            "job": job,
+            "iterations": iteration_results,
+            "pdf_path": pdf_path,
+            "debug_dir": debug_dir,
+        }
+    except Exception as e:
+        error_occurred = e
+    finally:
+        st.session_state["optimization_running"] = False
 
-    # Store in session state for persistent display
-    st.session_state["last_result"] = {
-        "optimized": optimized,
-        "validation": validation,
-        "job": job,
-        "iterations": iteration_results,
-        "pdf_path": pdf_path,
-        "debug_dir": debug_dir,
-    }
-    st.rerun()  # Rerun to show results and update history
+    if error_occurred:
+        st.error(f"Optimization failed: {error_occurred}")
+    else:
+        st.rerun()  # Rerun to show results and update history
 
 # Display last result if exists
 if "last_result" in st.session_state:

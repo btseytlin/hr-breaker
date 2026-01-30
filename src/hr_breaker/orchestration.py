@@ -45,6 +45,7 @@ async def run_filters(
     job: JobPosting,
     source: ResumeSource,
     parallel: bool = False,
+    no_shame: bool = False,
 ) -> ValidationResult:
     """Run filters, either sequentially (early exit) or in parallel."""
     filters = FilterRegistry.all()
@@ -52,7 +53,7 @@ async def run_filters(
     if parallel:
         # Run all filters concurrently
         start = time.perf_counter()
-        filter_instances = [filter_cls() for filter_cls in filters]
+        filter_instances = [filter_cls(no_shame=no_shame) for filter_cls in filters]
         tasks = [f.evaluate(optimized, job, source) for f in filter_instances]
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
         logger.debug(f"All filters (parallel): {time.perf_counter() - start:.2f}s")
@@ -83,7 +84,7 @@ async def run_filters(
         if filter_cls.priority >= 100 and results and not all(r.passed for r in results):
             continue
 
-        f = filter_cls()
+        f = filter_cls(no_shame=no_shame)
         start = time.perf_counter()
         result = await f.evaluate(optimized, job, source)
         logger.debug(f"{filter_cls.name}: {time.perf_counter() - start:.2f}s")
@@ -103,6 +104,7 @@ async def optimize_for_job(
     on_iteration: Callable | None = None,
     job: JobPosting | None = None,
     parallel: bool = False,
+    no_shame: bool = False,
 ) -> tuple[OptimizedResume, ValidationResult, JobPosting]:
     """
     Core optimization loop.
@@ -132,6 +134,9 @@ async def optimize_for_job(
     validation = None
     last_attempt: str | None = None
 
+    if no_shame:
+        logger.debug("No-shame mode enabled")
+
     for i in range(max_iterations):
         logger.debug(f"Iteration {i + 1}/{max_iterations}")
         ctx = IterationContext(
@@ -141,7 +146,7 @@ async def optimize_for_job(
             validation=validation,
         )
         with log_time("optimize_resume"):
-            optimized = await optimize_resume(source, job, ctx)
+            optimized = await optimize_resume(source, job, ctx, no_shame=no_shame)
         logger.debug(f"Optimizer changes: {optimized.changes}")
         # Store last attempt for feedback (html or data depending on mode)
         last_attempt = optimized.html if optimized.html else (
@@ -166,7 +171,7 @@ async def optimize_for_job(
                 ]
             )
         else:
-            validation = await run_filters(optimized, job, source, parallel=parallel)
+            validation = await run_filters(optimized, job, source, parallel=parallel, no_shame=no_shame)
 
         if on_iteration:
             on_iteration(i, optimized, validation)

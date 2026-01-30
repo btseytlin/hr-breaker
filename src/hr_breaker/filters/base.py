@@ -10,6 +10,9 @@ class BaseFilter(ABC):
     priority: int = 50  # Lower runs first, 100 = run last (after all others pass)
     threshold: float = 0.5  # Score threshold for passing
 
+    def __init__(self, no_shame: bool = False):
+        self.no_shame = no_shame
+
     @abstractmethod
     async def evaluate(
         self,

@@ -55,14 +55,20 @@ class TestRunFiltersParallel:
             name = "GoodFilter"
             priority = 1
 
-            async def evaluate(self, *args):
+            def __init__(self, **kwargs):
+                pass
+
+            async def evaluate(self, *args, **kwargs):
                 return good_result
 
         class BadFilter:
             name = "BadFilter"
             priority = 2
 
-            async def evaluate(self, *args):
+            def __init__(self, **kwargs):
+                pass
+
+            async def evaluate(self, *args, **kwargs):
                 raise RuntimeError("Filter crashed!")
 
         # Mock registry to return our test filters
