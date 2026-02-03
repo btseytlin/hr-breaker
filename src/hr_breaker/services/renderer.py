@@ -63,7 +63,7 @@ class HTMLRenderer(BaseRenderer):
         )
         from weasyprint.text.fonts import FontConfiguration
         self.font_config = FontConfiguration()
-        self._wrapper_html = (TEMPLATE_DIR / "resume_wrapper.html").read_text()
+        self._wrapper_html = (TEMPLATE_DIR / "resume_wrapper.html").read_text(encoding="utf-8")
 
     @classmethod
     def _ensure_weasyprint(cls):

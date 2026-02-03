@@ -273,7 +273,7 @@ if clicked:
                 # Save debug files if enabled
                 if debug_mode and debug_dir:
                     if opt.html:
-                        (debug_dir / f"iteration_{i + 1}.html").write_text(opt.html)
+                        (debug_dir / f"iteration_{i + 1}.html").write_text(opt.html, encoding="utf-8")
                     if opt.pdf_bytes:
                         (debug_dir / f"iteration_{i + 1}.pdf").write_bytes(opt.pdf_bytes)
 
