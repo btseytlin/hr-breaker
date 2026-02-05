@@ -1,4 +1,4 @@
-from .resume import ResumeSource, OptimizedResume
+from .resume import ResumeSource, OptimizedResume, CoverLetter
 from .resume_data import (
     ResumeData,
     RenderResult,
@@ -14,6 +14,7 @@ from .iteration import IterationContext
 __all__ = [
     "ResumeSource",
     "OptimizedResume",
+    "CoverLetter",
     "ResumeData",
     "RenderResult",
     "ContactInfo",

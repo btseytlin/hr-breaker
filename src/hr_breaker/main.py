@@ -13,7 +13,7 @@ if "event_loop" not in st.session_state:
     st.session_state.event_loop = asyncio.new_event_loop()
 asyncio.set_event_loop(st.session_state.event_loop)
 
-from hr_breaker.agents import extract_name, parse_job_posting
+from hr_breaker.agents import extract_name, parse_job_posting, generate_cover_letter
 from hr_breaker.config import get_settings
 from hr_breaker.models import GeneratedPDF, ResumeSource, ValidationResult
 from hr_breaker.orchestration import optimize_for_job
@@ -125,6 +125,8 @@ if "source_resume" not in st.session_state and not st.session_state.get("resume_
     cached_resumes = cache.list_all()
     if cached_resumes:
         st.session_state["source_resume"] = cached_resumes[-1]
+        if cached_resumes[-1].notes:
+            st.session_state["notes_input"] = cached_resumes[-1].notes
 
 # Two main columns: Resume | Job
 col_resume, col_job = st.columns(2)
@@ -185,6 +187,17 @@ with col_resume:
             st.session_state.pop("resume_cleared", None)
             st.rerun()
 
+    # Always visible notes input
+    st.markdown("---")
+    current_notes = st.session_state.get("notes_input", "")
+    new_notes = st.text_area(
+        "Notes (optional)", 
+        value=current_notes, 
+        placeholder="E.g. Focus on Python and AWS experience...",
+        key="notes_input",
+        help="Instructions for the optimizer. These are applied to the current resume."
+    )
+
 with col_job:
     job_text = st.session_state.get("job_text", "")
     has_job = bool(job_text)
@@ -235,6 +248,14 @@ with col_job:
                 st.session_state.pop("scrape_failed_url", None)
                 st.rerun()
 
+# User notes/instructions
+user_notes = st.text_area(
+    "Notes / Instructions",
+    height=100,
+    help="Add specific instructions for the AI (e.g., 'Focus on leadership', 'Keep it under 300 words')",
+    placeholder="e.g., Emphasize my experience with Python and cloud architecture...",
+)
+
 # Optimize button
 is_running = st.session_state.get("optimization_running", False)
 can_optimize = has_resume and has_job and not is_running
@@ -243,12 +264,35 @@ if not has_resume:
     btn_help = "Need resume"
 elif not has_job:
     btn_help = "Need job posting"
-elif is_running:
     btn_help = "Optimization in progress"
-clicked = st.button("🚀 Optimize", disabled=not can_optimize, use_container_width=True, help=btn_help)
+
+col_opt, col_cl = st.columns(2)
+with col_opt:
+    clicked = st.button("🚀 Optimize", disabled=not can_optimize, use_container_width=True, help=btn_help)
+with col_cl:
+    clicked_cl = st.button("📝 Create Cover Letter", disabled=not can_optimize, use_container_width=True, help=btn_help)
+
+if clicked_cl:
+    source = st.session_state["source_resume"]
+    # Update notes from UI input before processing
+    source.notes = st.session_state.get("notes_input")
+    with st.spinner("Generating cover letter..."):
+        try:
+            # We need to parse the job first if not already parsed, but easier to just use the text
+            # The agent takes JobPosting, so let's quickly parse it if needed or create a dummy one if we trust the text
+            # Better to parse it properly to get company/title
+            job_obj = cached_parse_job(job_text)
+            
+            cover_letter = run_async(generate_cover_letter(source, job_obj, user_notes=user_notes))
+            st.session_state["last_cover_letter"] = cover_letter
+        except Exception as e:
+            st.error(f"Failed to generate cover letter: {e}")
+    st.rerun()
 
 if clicked:
     source = st.session_state["source_resume"]
+    # Update notes from UI input before processing
+    source.notes = st.session_state.get("notes_input")
     st.session_state["optimization_running"] = True
     error_occurred = None
 
@@ -285,7 +329,10 @@ if clicked:
                     on_iteration=on_iteration,
                     job=job,
                     parallel=not sequential_mode,
+                    job=job,
+                    parallel=not sequential_mode,
                     no_shame=no_shame_mode,
+                    user_notes=user_notes,
                 )
             )
             status_container.update(label="Optimization complete", state="complete")
@@ -388,3 +435,19 @@ if "last_result" in st.session_state:
     if st.button("Clear Result", use_container_width=True):
         st.session_state.pop("last_result", None)
         st.rerun()
+
+# Display Cover Letter if exists
+if "last_cover_letter" in st.session_state:
+    cl = st.session_state["last_cover_letter"]
+    st.markdown("---")
+    st.markdown(f"### Cover Letter: {cl.job_title} at {cl.job_company}")
+    
+    with st.expander("Markdown Content", expanded=True):
+        st.markdown(cl.markdown)
+        st.divider()
+        st.code(cl.markdown, language="markdown")
+    
+    if st.button("Clear Cover Letter", use_container_width=True):
+        st.session_state.pop("last_cover_letter", None)
+        st.rerun()
+

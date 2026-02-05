@@ -71,7 +71,7 @@ class HTMLRenderer(BaseRenderer):
         if cls._weasyprint_imported:
             return
 
-        # Set up library path before importing
+        # Set up library path before importing (mainly for macOS)
         _setup_macos_library_path()
 
         try:
@@ -79,14 +79,30 @@ class HTMLRenderer(BaseRenderer):
             import weasyprint  # noqa: F401
             cls._weasyprint_imported = True
         except OSError as e:
-            if "libgobject" in str(e) or "libpango" in str(e):
-                raise RenderError(
-                    "WeasyPrint libraries not found. On macOS, run:\n"
-                    "  brew install pango gdk-pixbuf libffi\n"
-                    "Then either:\n"
-                    "  1. Add to ~/.zshrc: export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib\n"
-                    "  2. Or run with: DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib uv run hr-breaker ..."
-                ) from e
+            if any(libs in str(e) for libs in ["libgobject", "libpango", "libcairo", "libgdk_pixbuf"]):
+                if sys.platform == "darwin":
+                    msg = (
+                        "WeasyPrint libraries not found. On macOS, run:\n"
+                        "  brew install pango gdk-pixbuf libffi\n"
+                        "Then either:\n"
+                        "  1. Add to ~/.zshrc: export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib\n"
+                        "  2. Or run with: DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib uv run hr-breaker ..."
+                    )
+                elif sys.platform == "win32":
+                    msg = (
+                        "WeasyPrint libraries (GTK3) not found on Windows.\n"
+                        "Please download and install the GTK3 runtime from:\n"
+                        "  https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer/releases\n"
+                        "After installation, ensure the GTK3 bin folder is in your PATH and RESTART your terminal."
+                    )
+                else:
+                    msg = (
+                        "WeasyPrint libraries (Pango, Cairo, GdkPixbuf) not found.\n"
+                        "Please install them using your system package manager:\n"
+                        "  Ubuntu/Debian: sudo apt-get install libpango-1.0-0 libharfbuzz0b libpangoft2-1.0-0\n"
+                        "  Fedora: sudo dnf install pango cairo gdk-pixbuf2"
+                    )
+                raise RenderError(msg) from e
             raise
 
     def render(self, html_body: str) -> RenderResult:

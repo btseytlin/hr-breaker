@@ -105,6 +105,7 @@ async def optimize_for_job(
     job: JobPosting | None = None,
     parallel: bool = False,
     no_shame: bool = False,
+    user_notes: str | None = None,
 ) -> tuple[OptimizedResume, ValidationResult, JobPosting]:
     """
     Core optimization loop.
@@ -146,7 +147,7 @@ async def optimize_for_job(
             validation=validation,
         )
         with log_time("optimize_resume"):
-            optimized = await optimize_resume(source, job, ctx, no_shame=no_shame)
+            optimized = await optimize_resume(source, job, ctx, no_shame=no_shame, user_notes=user_notes)
         logger.debug(f"Optimizer changes: {optimized.changes}")
         # Store last attempt for feedback (html or data depending on mode)
         last_attempt = optimized.html if optimized.html else (
