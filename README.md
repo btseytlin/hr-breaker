@@ -39,6 +39,31 @@ cp .env.example .env
 uv run streamlit run src/hr_breaker/main.py
 ```
 
+## Prerequisites
+
+HR-Breaker uses **WeasyPrint** for PDF generation, which requires system-level libraries (Pango, Cairo, etc.).
+
+### Windows
+1. Download and install the **GTK3 runtime**: [Latest Releases](https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer/releases).
+2. Ensure the installer adds GTK3 to your PATH.
+3. Restart your terminal.
+
+### macOS
+1. Install dependencies via Homebrew:
+   ```bash
+   brew install pango gdk-pixbuf libffi
+   ```
+2. Set library path (or add to your `.zshrc`):
+   ```bash
+   export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib
+   ```
+
+### Linux
+Install via your package manager:
+- **Ubuntu/Debian**: `sudo apt-get install libpango-1.0-0 libharfbuzz0b libpangoft2-1.0-0`
+- **Fedora**: `sudo dnf install pango cairo gdk-pixbuf2`
+
+
 ## Usage
 
 ### Web UI

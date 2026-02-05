@@ -230,6 +230,7 @@ async def optimize_resume(
     job: JobPosting,
     context: IterationContext,
     no_shame: bool = False,
+    user_notes: str | None = None,
 ) -> OptimizedResume:
     """Optimize resume for job posting."""
     prompt = f"""## Original Resume:
@@ -241,6 +242,18 @@ Company: {job.company}
 Requirements: {', '.join(job.requirements)}
 Keywords: {', '.join(job.keywords)}
 Description: {job.description}
+"""
+
+
+    if user_notes:
+        prompt += f"""
+## User Notes/Instructions:
+{user_notes}
+
+IMPORTANT: Treat the above "User Notes" as GROUND TRUTH about the candidate's preferences or extra experience.
+- You MUST incorporate these notes into the resume if they provide new information (like "I have experience with X").
+- If the notes give stylistic instructions (e.g. "Focus on leadership"), follow them.
+- These notes override the "only use original content" rule because they ARE provided by the user.
 """
 
     if context.last_attempt:

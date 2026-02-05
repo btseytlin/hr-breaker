@@ -15,6 +15,7 @@ class ResumeSource(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
     first_name: str | None = None
     last_name: str | None = None
+    notes: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -46,3 +47,12 @@ class OptimizedResume(BaseModel):
     pdf_text: str | None = None
     pdf_bytes: bytes | None = None
     pdf_path: Path | None = None
+
+
+class CoverLetter(BaseModel):
+    """Generated cover letter."""
+
+    markdown: str
+    job_company: str | None = None
+    job_title: str | None = None
+
