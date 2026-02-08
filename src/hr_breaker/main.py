@@ -15,8 +15,8 @@ asyncio.set_event_loop(st.session_state.event_loop)
 
 from hr_breaker.agents import extract_name, parse_job_posting
 from hr_breaker.config import get_settings
-from hr_breaker.models import GeneratedPDF, ResumeSource, ValidationResult
-from hr_breaker.orchestration import optimize_for_job
+from hr_breaker.models import GeneratedPDF, ResumeSource, ValidationResult, SUPPORTED_LANGUAGES, get_language
+from hr_breaker.orchestration import optimize_for_job, translate_and_rerender
 from hr_breaker.services import PDFStorage, ResumeCache, scrape_job_posting, CloudflareBlockedError
 from hr_breaker.services.pdf_parser import extract_text_from_pdf
 
@@ -74,6 +74,20 @@ with st.sidebar:
     sequential_mode = st.checkbox("Sequential", value=False, help="Run filters sequentially with early exit")
     debug_mode = st.checkbox("Debug", value=False, help="Save each iteration PDF")
     no_shame_mode = st.checkbox("No Shame", value=False, help="Lenient mode: allow aggressive content stretching")
+
+    # Language selector
+    _lang_options = [lang.code for lang in SUPPORTED_LANGUAGES]
+    _lang_labels = {lang.code: lang.native_name for lang in SUPPORTED_LANGUAGES}
+    _default_lang_idx = _lang_options.index(settings.default_language) if settings.default_language in _lang_options else 0
+    selected_lang_code = st.selectbox(
+        "Resume language",
+        options=_lang_options,
+        index=_default_lang_idx,
+        format_func=lambda code: _lang_labels[code],
+        help="Output language for the final resume. Optimization runs in English, then translates.",
+    )
+    selected_language = get_language(selected_lang_code)
+
     max_iterations = st.number_input("Max iterations", min_value=1, max_value=10, value=settings.max_iterations)
 
     st.divider()
@@ -277,6 +291,13 @@ if clicked:
                     if opt.pdf_bytes:
                         (debug_dir / f"iteration_{i + 1}.pdf").write_bytes(opt.pdf_bytes)
 
+            def on_translation_status(msg):
+                status_container.update(label=msg)
+                status_container.write(msg)
+
+            # Only pass language if not English (no translation needed)
+            target_lang = selected_language if selected_language.code != "en" else None
+
             optimized, validation, job = run_async(
                 optimize_for_job(
                     source,
@@ -286,6 +307,8 @@ if clicked:
                     job=job,
                     parallel=not sequential_mode,
                     no_shame=no_shame_mode,
+                    language=target_lang,
+                    on_translation_status=on_translation_status,
                 )
             )
             status_container.update(label="Optimization complete", state="complete")
@@ -294,7 +317,8 @@ if clicked:
         pdf_path = None
         if optimized and optimized.pdf_bytes:
             pdf_path = pdf_storage.generate_path(
-                source.first_name, source.last_name, job.company, job.title
+                source.first_name, source.last_name, job.company, job.title,
+                lang_code=selected_lang_code,
             )
             pdf_path.parent.mkdir(parents=True, exist_ok=True)
             pdf_path.write_bytes(optimized.pdf_bytes)
@@ -366,6 +390,64 @@ if "last_result" in st.session_state:
                 subprocess.run(["xdg-open", folder])
     elif optimized:
         st.error("Failed to render PDF")
+
+    # Translate existing result to another language (independent of "Resume language" option)
+    if optimized and optimized.html:
+        translate_targets = [lang for lang in SUPPORTED_LANGUAGES if lang.code != "en"]
+        if translate_targets:
+            tr_col1, tr_col2 = st.columns([2, 1])
+            with tr_col1:
+                translate_lang_code = st.selectbox(
+                    "Translate to…",
+                    options=[lang.code for lang in translate_targets],
+                    format_func=lambda c: next(lg.native_name for lg in translate_targets if lg.code == c),
+                    key="translate_target_lang",
+                    help="Translate this result without re-running optimization",
+                )
+            with tr_col2:
+                translate_clicked = st.button("🌐 Translate", use_container_width=True, key="translate_btn")
+            if translate_clicked and translate_lang_code:
+                translate_language = get_language(translate_lang_code)
+                try:
+                    with st.status(f"Translating to {translate_language.native_name}...", expanded=True) as tr_status:
+                        def on_tr_status(msg):
+                            tr_status.update(label=msg)
+                            tr_status.write(msg)
+
+                        translated = run_async(
+                            translate_and_rerender(optimized, translate_language, job, on_status=on_tr_status)
+                        )
+                        tr_status.update(label="Translation complete", state="complete")
+
+                    # Save translated PDF
+                    if translated.pdf_bytes:
+                        source = st.session_state["source_resume"]
+                        tr_pdf_path = pdf_storage.generate_path(
+                            source.first_name, source.last_name, job.company, job.title,
+                            lang_code=translate_language.code,
+                        )
+                        tr_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+                        tr_pdf_path.write_bytes(translated.pdf_bytes)
+
+                        pdf_record = GeneratedPDF(
+                            path=tr_pdf_path,
+                            source_checksum=source.checksum,
+                            company=job.company,
+                            job_title=job.title,
+                            first_name=source.first_name,
+                            last_name=source.last_name,
+                        )
+                        pdf_storage.save_record(pdf_record)
+
+                        # Update session state with translated result
+                        st.session_state["last_result"] = {
+                            **st.session_state["last_result"],
+                            "optimized": translated,
+                            "pdf_path": tr_pdf_path,
+                        }
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Translation failed: {e}")
 
     # Resume content preview
     if optimized:

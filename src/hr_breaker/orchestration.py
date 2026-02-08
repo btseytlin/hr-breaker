@@ -7,7 +7,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
-from hr_breaker.agents import optimize_resume, parse_job_posting
+from hr_breaker.agents import optimize_resume, parse_job_posting, translate_resume, review_translation
 from hr_breaker.config import get_settings, logger
 from hr_breaker.filters import (
     LLMChecker,
@@ -21,6 +21,7 @@ from hr_breaker.models import (
     FilterResult,
     IterationContext,
     JobPosting,
+    Language,
     OptimizedResume,
     ResumeSource,
     ValidationResult,
@@ -105,6 +106,8 @@ async def optimize_for_job(
     job: JobPosting | None = None,
     parallel: bool = False,
     no_shame: bool = False,
+    language: Language | None = None,
+    on_translation_status: Callable[[str], None] | None = None,
 ) -> tuple[OptimizedResume, ValidationResult, JobPosting]:
     """
     Core optimization loop.
@@ -115,6 +118,10 @@ async def optimize_for_job(
         max_iterations: Max optimization iterations (default from settings)
         on_iteration: Optional callback(iteration, optimized, validation)
         job: Pre-parsed job posting (optional, skips parsing if provided)
+        parallel: Run filters in parallel
+        no_shame: Lenient mode
+        language: Target language for resume output (None = English, no translation)
+        on_translation_status: Optional callback(status_message) for translation progress
 
     Returns:
         (optimized_resume, validation_result, job_posting)
@@ -179,7 +186,85 @@ async def optimize_for_job(
         if validation.passed:
             break
 
+    # Post-processing: translate if target language is not English
+    if language is not None and language.code != "en" and optimized is not None and optimized.html:
+        optimized = await translate_and_rerender(
+            optimized, language, job, renderer, settings.translation_max_iterations,
+            on_translation_status,
+        )
+
     return optimized, validation, job
+
+
+async def translate_and_rerender(
+    optimized: OptimizedResume,
+    language: Language,
+    job: JobPosting,
+    renderer: HTMLRenderer | None = None,
+    max_translation_iterations: int | None = None,
+    on_status: Callable[[str], None] | None = None,
+) -> OptimizedResume:
+    """Translate the optimized resume HTML and re-render the PDF.
+
+    Public API for translating an already-optimized resume.
+    Runs a mini translate-review loop (max_translation_iterations) to ensure quality.
+    """
+    if renderer is None:
+        renderer = HTMLRenderer()
+    if max_translation_iterations is None:
+        max_translation_iterations = get_settings().translation_max_iterations
+    original_html = optimized.html
+    feedback: str | None = None
+
+    for i in range(max_translation_iterations):
+        iter_label = f"Translation iteration {i + 1}/{max_translation_iterations}"
+        logger.debug(f"{iter_label}: translating to {language.english_name}")
+        if on_status:
+            status = f"Translating to {language.english_name}..."
+            if i > 0:
+                status = f"Refining {language.english_name} translation (attempt {i + 1})..."
+            on_status(status)
+
+        with log_time(f"translate_resume (iter {i + 1})"):
+            translation = await translate_resume(original_html, language, job, feedback=feedback)
+
+        logger.debug(f"{iter_label}: reviewing translation")
+        if on_status:
+            on_status(f"Reviewing {language.english_name} translation...")
+
+        with log_time(f"review_translation (iter {i + 1})"):
+            review = await review_translation(original_html, translation.html, language, job)
+
+        logger.debug(
+            f"{iter_label}: review score={review.score:.2f}, passed={review.passed}"
+        )
+
+        if review.passed:
+            logger.debug(f"Translation approved (score={review.score:.2f})")
+            break
+
+        # Build feedback for next iteration
+        feedback_parts = []
+        if review.issues:
+            feedback_parts.append("Issues: " + "; ".join(review.issues))
+        if review.suggestions:
+            feedback_parts.append("Suggestions: " + "; ".join(review.suggestions))
+        feedback = "\n".join(feedback_parts)
+        logger.debug(f"Translation feedback: {feedback}")
+    else:
+        logger.warning(
+            f"Translation review did not pass after {max_translation_iterations} iterations "
+            f"(score={review.score:.2f}), using last translation"
+        )
+
+    # Update optimized with translated HTML and re-render PDF
+    translated_optimized = optimized.model_copy(update={"html": translation.html})
+    translated_optimized = _render_and_extract(translated_optimized, renderer)
+
+    if on_status:
+        on_status("Translation complete")
+
+    return translated_optimized
 
 
 def _render_and_extract(optimized: OptimizedResume, renderer) -> OptimizedResume:

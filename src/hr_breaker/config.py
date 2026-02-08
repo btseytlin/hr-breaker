@@ -73,6 +73,10 @@ class Settings(BaseModel):
     # Agent limits
     agent_name_extractor_chars: int = 2000
 
+    # Translation settings
+    default_language: str = "en"
+    translation_max_iterations: int = 2
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -125,6 +129,9 @@ def get_settings() -> Settings:
         ),
         # Agent limits
         agent_name_extractor_chars=int(os.getenv("AGENT_NAME_EXTRACTOR_CHARS", "2000")),
+        # Translation settings
+        default_language=os.getenv("DEFAULT_LANGUAGE", "en"),
+        translation_max_iterations=int(os.getenv("TRANSLATION_MAX_ITERATIONS", "2")),
     )
 
 

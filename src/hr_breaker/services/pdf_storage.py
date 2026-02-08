@@ -24,8 +24,9 @@ class PDFStorage:
         last_name: str | None,
         company: str,
         role: str | None = None,
+        lang_code: str | None = None,
     ) -> Path:
-        """Generate PDF path: {first}_{last}_{company}_{role}.pdf"""
+        """Generate PDF path: {first}_{last}_{company}_{role}_{lang}.pdf"""
         parts = []
         if first_name:
             parts.append(sanitize_filename(first_name))
@@ -34,6 +35,8 @@ class PDFStorage:
         parts.append(sanitize_filename(company))
         if role:
             parts.append(sanitize_filename(role))
+        # Always append language code
+        parts.append(lang_code if lang_code else "en")
 
         filename = "_".join(parts) + ".pdf"
         return self.output_dir / filename

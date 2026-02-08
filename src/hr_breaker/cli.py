@@ -7,7 +7,7 @@ import click
 
 from hr_breaker.agents import extract_name, parse_job_posting
 from hr_breaker.config import get_settings
-from hr_breaker.models import GeneratedPDF, ResumeSource
+from hr_breaker.models import GeneratedPDF, ResumeSource, SUPPORTED_LANGUAGES, get_language
 from hr_breaker.orchestration import optimize_for_job
 from hr_breaker.services import PDFStorage, scrape_job_posting, ScrapingError, CloudflareBlockedError
 
@@ -29,6 +29,12 @@ OUTPUT_DIR = Path("output")
 @click.option("--debug", "-d", is_flag=True, help="Save all iterations as PDFs to output/debug/")
 @click.option("--seq", "-s", is_flag=True, help="Run filters sequentially (default: parallel)")
 @click.option("--no-shame", is_flag=True, help="Lenient mode: allow aggressive content stretching")
+@click.option(
+    "--lang", "-l",
+    type=click.Choice([lang.code for lang in SUPPORTED_LANGUAGES], case_sensitive=False),
+    default=None,
+    help="Output language (default: en). Optimization runs in English, then translates.",
+)
 def optimize(
     resume_path: Path,
     job_input: str,
@@ -37,6 +43,7 @@ def optimize(
     debug: bool,
     seq: bool,
     no_shame: bool,
+    lang: str | None,
 ):
     """Optimize resume for job posting.
 
@@ -76,6 +83,13 @@ def optimize(
             else:
                 click.echo(f"    Debug: no PDF (render failed)")
 
+    # Resolve target language
+    lang_code = lang or settings.default_language
+    target_language = get_language(lang_code) if lang_code != "en" else None
+
+    def on_translation_status(msg: str):
+        click.echo(f"  {msg}")
+
     # Run all async work in single event loop
     async def run_optimization():
         nonlocal debug_dir
@@ -91,7 +105,8 @@ def optimize(
 
         mode = "sequential" if seq else "parallel"
         shame_mode = " [no-shame]" if no_shame else ""
-        click.echo(f"Optimizing (mode: {mode}{shame_mode})...")
+        lang_label = f" [lang: {lang_code}]" if target_language else ""
+        click.echo(f"Optimizing (mode: {mode}{shame_mode}{lang_label})...")
 
         source = ResumeSource(
             content=resume_content,
@@ -100,7 +115,8 @@ def optimize(
         )
         optimized, validation, _ = await optimize_for_job(
             source, max_iterations=max_iterations, on_iteration=on_iteration, job=job,
-            parallel=not seq, no_shame=no_shame
+            parallel=not seq, no_shame=no_shame,
+            language=target_language, on_translation_status=on_translation_status,
         )
         return first_name, last_name, source, optimized, validation, job
 
@@ -114,7 +130,9 @@ def optimize(
     # Save final PDF (reuse bytes from last iteration)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     if output is None:
-        output = OUTPUT_DIR / pdf_storage.generate_path(first_name, last_name, job.company, job.title).name
+        output = OUTPUT_DIR / pdf_storage.generate_path(
+            first_name, last_name, job.company, job.title, lang_code=lang_code,
+        ).name
 
     if not optimized.pdf_bytes:
         raise click.ClickException("No PDF generated (render failed)")
