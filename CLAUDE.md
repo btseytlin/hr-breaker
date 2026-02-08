@@ -23,7 +23,7 @@ Tool for optimizing resumes for job postings and passing automated filters.
 4. Modular filter system - easy to add new checks
 5. Resume caching - input once, apply to many jobs
 
-Python: 3.10+
+Python: 3.10–3.13 (3.14+ breaks asyncio in streamlit thread pools)
 Package manager: uv
 Always use venv: `source .venv/bin/activate`
 Unit-tests: pytest
