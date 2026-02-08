@@ -118,6 +118,7 @@ async def optimize_for_job(
     job: JobPosting | None = None,
     parallel: bool = False,
     no_shame: bool = False,
+    user_instructions: str | None = None,
     language: Language | None = None,
     on_translation_status: Callable[[str], None] | None = None,
 ) -> tuple[OptimizedResume, ValidationResult, JobPosting]:
@@ -132,6 +133,7 @@ async def optimize_for_job(
         job: Pre-parsed job posting (optional, skips parsing if provided)
         parallel: Run filters in parallel
         no_shame: Lenient mode
+        user_instructions: Optional user instructions for the optimizer
         language: Target language for resume output (None = English, no translation)
         on_translation_status: Optional callback(status_message) for translation progress
 
@@ -168,7 +170,7 @@ async def optimize_for_job(
             validation=validation,
         )
         with log_time("optimize_resume"):
-            optimized = await optimize_resume(source, job, ctx, no_shame=no_shame)
+            optimized = await optimize_resume(source, job, ctx, no_shame=no_shame, user_instructions=user_instructions)
         logger.info(f"Optimizer changes: {optimized.changes}")
         # Store last attempt for feedback (html or data depending on mode)
         last_attempt = (

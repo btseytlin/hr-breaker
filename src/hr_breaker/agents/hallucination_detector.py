@@ -120,7 +120,15 @@ async def detect_hallucinations(
 
 === ORIGINAL RESUME (source of truth, may include commented-out content which is valid) ===
 {source.content}
+"""
 
+    if source.instructions:
+        prompt += f"""
+=== USER INSTRUCTIONS (also source of truth - the user provided these extra details/instructions) ===
+{source.instructions}
+"""
+
+    prompt += f"""
 === OPTIMIZED RESUME (check for fabrication) ===
 {optimized_content}
 

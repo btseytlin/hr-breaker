@@ -159,6 +159,8 @@ if (
     cached_resumes = cache.list_all()
     if cached_resumes:
         st.session_state["source_resume"] = cached_resumes[-1]
+        if cached_resumes[-1].instructions:
+            st.session_state["user_instructions"] = cached_resumes[-1].instructions
 
 # Two main columns: Resume | Job
 col_resume, col_job = st.columns(2)
@@ -301,6 +303,16 @@ with col_job:
                 st.session_state.pop("scrape_failed_url", None)
                 st.rerun()
 
+# User instructions
+if "user_instructions" not in st.session_state:
+    st.session_state["user_instructions"] = ""
+user_instructions = st.text_area(
+    "Instructions (optional)",
+    placeholder="E.g. Focus on Python and AWS experience, add my Kubernetes certification...",
+    help="Instructions for the optimizer: extra experience, style preferences, emphasis areas.",
+    key="user_instructions",
+)
+
 # Optimize button
 is_running = st.session_state.get("optimization_running", False)
 can_optimize = has_resume and has_job and not is_running
@@ -317,6 +329,12 @@ clicked = st.button(
 
 if clicked:
     source = st.session_state["source_resume"]
+    # Persist instructions to cache
+    instructions_value = user_instructions.strip() if user_instructions else None
+    if instructions_value != source.instructions:
+        source = source.model_copy(update={"instructions": instructions_value})
+        cache.put(source)
+        st.session_state["source_resume"] = source
     st.session_state["optimization_running"] = True
     error_occurred = None
 
@@ -342,7 +360,7 @@ if clicked:
                 # Save debug files if enabled
                 if debug_mode and debug_dir:
                     if opt.html:
-                        (debug_dir / f"iteration_{i + 1}.html").write_text(opt.html)
+                        (debug_dir / f"iteration_{i + 1}.html").write_text(opt.html, encoding="utf-8")
                     if opt.pdf_bytes:
                         (debug_dir / f"iteration_{i + 1}.pdf").write_bytes(
                             opt.pdf_bytes
@@ -364,6 +382,7 @@ if clicked:
                     job=job,
                     parallel=not sequential_mode,
                     no_shame=no_shame_mode,
+                    user_instructions=instructions_value,
                     language=target_lang,
                     on_translation_status=on_translation_status,
                 )

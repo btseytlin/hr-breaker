@@ -231,6 +231,7 @@ async def optimize_resume(
     job: JobPosting,
     context: IterationContext,
     no_shame: bool = False,
+    user_instructions: str | None = None,
 ) -> OptimizedResume:
     """Optimize resume for job posting."""
     prompt = f"""## Original Resume:
@@ -242,6 +243,17 @@ Company: {job.company}
 Requirements: {', '.join(job.requirements)}
 Keywords: {', '.join(job.keywords)}
 Description: {job.description}
+"""
+
+    if user_instructions:
+        prompt += f"""
+## User Instructions:
+{user_instructions}
+
+IMPORTANT: Treat the above "User Instructions" as GROUND TRUTH about the candidate's preferences or extra experience.
+- You MUST incorporate these instructions into the resume if they provide new information (like "I have experience with X").
+- If the instructions give stylistic guidance (e.g. "Focus on leadership"), follow them.
+- These instructions override the "only use original content" rule because they ARE provided by the user.
 """
 
     if context.last_attempt:

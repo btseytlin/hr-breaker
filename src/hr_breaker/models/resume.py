@@ -15,13 +15,17 @@ class ResumeSource(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
     first_name: str | None = None
     last_name: str | None = None
+    instructions: str | None = None
 
     @model_validator(mode="before")
     @classmethod
-    def handle_legacy_latex_field(cls, data: Any) -> Any:
-        """Handle old cache files that have 'latex' instead of 'content'."""
-        if isinstance(data, dict) and "latex" in data and "content" not in data:
-            data["content"] = data.pop("latex")
+    def handle_legacy_fields(cls, data: Any) -> Any:
+        """Handle old cache files with renamed fields."""
+        if isinstance(data, dict):
+            if "latex" in data and "content" not in data:
+                data["content"] = data.pop("latex")
+            if "notes" in data and "instructions" not in data:
+                data["instructions"] = data.pop("notes")
         return data
 
     # Legacy alias for backward compatibility

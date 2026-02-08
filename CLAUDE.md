@@ -97,9 +97,11 @@ uv run streamlit run src/hr_breaker/main.py
 
 # CLI
 uv run hr-breaker optimize resume.txt https://example.com/job
+uv run hr-breaker optimize resume.txt https://example.com/job -l ru # optimize, then translate to Russian
 uv run hr-breaker optimize resume.txt job.txt -d              # debug mode
 uv run hr-breaker optimize resume.txt job.txt --seq           # sequential filters (early exit)
 uv run hr-breaker optimize resume.txt job.txt --no-shame      # massively relax lies/hallucination/AI checks (use with caution!)
+uv run hr-breaker optimize resume.txt job.txt --instructions "Focus on Python, add K8s cert"  # user instructions
 uv run hr-breaker list                                        # list generated PDFs
 
 # Tests

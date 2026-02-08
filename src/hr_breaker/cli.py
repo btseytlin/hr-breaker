@@ -7,9 +7,19 @@ import click
 
 from hr_breaker.agents import extract_name, parse_job_posting
 from hr_breaker.config import get_settings
-from hr_breaker.models import GeneratedPDF, ResumeSource, SUPPORTED_LANGUAGES, get_language
+from hr_breaker.models import (
+    GeneratedPDF,
+    ResumeSource,
+    SUPPORTED_LANGUAGES,
+    get_language, 
+)
 from hr_breaker.orchestration import optimize_for_job
-from hr_breaker.services import PDFStorage, scrape_job_posting, ScrapingError, CloudflareBlockedError
+from hr_breaker.services import (
+    PDFStorage,
+    scrape_job_posting,
+    ScrapingError,
+    CloudflareBlockedError,
+)
 from hr_breaker.services.pdf_parser import load_resume_content
 
 
@@ -25,16 +35,51 @@ OUTPUT_DIR = Path("output")
 @cli.command()
 @click.argument("resume_path", type=click.Path(exists=True, path_type=Path))
 @click.argument("job_input")
-@click.option("--output", "-o", type=click.Path(path_type=Path), default=None, envvar="HR_BREAKER_OUTPUT")
-@click.option("--max-iterations", "-n", type=int, default=None, envvar="HR_BREAKER_MAX_ITERATIONS")
-@click.option("--debug", "-d", is_flag=True, help="Save all iterations as PDFs to output/debug/", envvar="HR_BREAKER_DEBUG")
-@click.option("--seq", "-s", is_flag=True, help="Run filters sequentially (default: parallel)", envvar="HR_BREAKER_SEQ")
-@click.option("--no-shame", is_flag=True, help="Lenient mode: allow aggressive content stretching", envvar="HR_BREAKER_NO_SHAME")
 @click.option(
-    "--lang", "-l",
-    type=click.Choice([lang.code for lang in SUPPORTED_LANGUAGES], case_sensitive=False),
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path),
+    default=None,
+    envvar="HR_BREAKER_OUTPUT",
+)
+@click.option(
+    "--max-iterations", "-n", type=int, default=None, envvar="HR_BREAKER_MAX_ITERATIONS"
+)
+@click.option(
+    "--debug",
+    "-d",
+    is_flag=True,
+    help="Save all iterations as PDFs to output/debug/",
+    envvar="HR_BREAKER_DEBUG",
+)
+@click.option(
+    "--seq",
+    "-s",
+    is_flag=True,
+    help="Run filters sequentially (default: parallel)",
+    envvar="HR_BREAKER_SEQ",
+)
+@click.option(
+    "--no-shame",
+    is_flag=True,
+    help="Lenient mode: allow aggressive content stretching",
+    envvar="HR_BREAKER_NO_SHAME",
+)
+@click.option(
+    "--lang",
+    "-l",
+    type=click.Choice(
+        [lang.code for lang in SUPPORTED_LANGUAGES], case_sensitive=False
+    ),
     default=None,
     help="Output language (default: en). Optimization runs in English, then translates.",
+)
+@click.option(
+    "--instructions",
+    "-i",
+    type=str,
+    default=None,
+    help="Instructions for the optimizer (extra experience, emphasis areas)",
 )
 def optimize(
     resume_path: Path,
@@ -45,6 +90,7 @@ def optimize(
     seq: bool,
     no_shame: bool,
     lang: str | None,
+    instructions: str | None,
 ):
     """Optimize resume for job posting.
 
@@ -61,7 +107,10 @@ def optimize(
 
     def on_iteration(i, optimized, validation):
         status = "PASS" if validation.passed else "FAIL"
-        scores = ", ".join(f"{r.filter_name}:{r.score:.2f}/{r.threshold:.2f}" for r in validation.results)
+        scores = ", ".join(
+            f"{r.filter_name}:{r.score:.2f}/{r.threshold:.2f}"
+            for r in validation.results
+        )
         click.echo(f"  Iteration {i + 1}: {status} [{scores}]")
 
         # Save intermediate PDF in debug mode
@@ -70,10 +119,12 @@ def optimize(
             # Save HTML or JSON depending on what's available
             if optimized.html:
                 debug_html = debug_dir / f"iteration_{i + 1}.html"
-                debug_html.write_text(optimized.html)
+                debug_html.write_text(optimized.html, encoding="utf-8")
             elif optimized.data:
                 debug_json = debug_dir / f"iteration_{i + 1}.json"
-                debug_json.write_text(optimized.data.model_dump_json(indent=2))
+                debug_json.write_text(
+                    optimized.data.model_dump_json(indent=2), encoding="utf-8"
+                )
             if optimized.pdf_bytes:
                 debug_pdf.write_bytes(optimized.pdf_bytes)
                 click.echo(f"    Debug: saved {debug_pdf}")
@@ -112,9 +163,15 @@ def optimize(
             last_name=last_name,
         )
         optimized, validation, _ = await optimize_for_job(
-            source, max_iterations=max_iterations, on_iteration=on_iteration, job=job,
-            parallel=not seq, no_shame=no_shame,
-            language=target_language, on_translation_status=on_translation_status,
+            source,
+            max_iterations=max_iterations,
+            on_iteration=on_iteration,
+            job=job,
+            parallel=not seq,
+            no_shame=no_shame,
+            user_instructions=instructions,
+            language=target_language,
+            on_translation_status=on_translation_status,
         )
         return first_name, last_name, source, optimized, validation, job
 
@@ -128,9 +185,16 @@ def optimize(
     # Save final PDF (reuse bytes from last iteration)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     if output is None:
-        output = OUTPUT_DIR / pdf_storage.generate_path(
-            first_name, last_name, job.company, job.title, lang_code=lang_code,
-        ).name
+        output = (
+            OUTPUT_DIR
+            / pdf_storage.generate_path(
+                first_name,
+                last_name,
+                job.company,
+                job.title,
+                lang_code=lang_code,
+            ).name
+        )
 
     if not optimized.pdf_bytes:
         raise click.ClickException("No PDF generated (render failed)")
@@ -172,7 +236,7 @@ def _get_job_text(job_input: str) -> str:
     # Check if file
     path = Path(job_input)
     if path.exists():
-        return path.read_text()
+        return path.read_text(encoding="utf-8")
 
     # Check if URL
     if job_input.startswith(("http://", "https://")):
