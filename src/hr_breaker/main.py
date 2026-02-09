@@ -1,15 +1,9 @@
 import asyncio
 import subprocess
 import sys
-import nest_asyncio
+from concurrent.futures import ThreadPoolExecutor
+
 import streamlit as st
-
-nest_asyncio.apply()
-
-# Event loop setup
-if "event_loop" not in st.session_state:
-    st.session_state.event_loop = asyncio.new_event_loop()
-asyncio.set_event_loop(st.session_state.event_loop)
 
 from hr_breaker.agents import extract_name, parse_job_posting
 from hr_breaker.config import get_settings
@@ -31,10 +25,14 @@ settings = get_settings()
 st.set_page_config(page_title="HR-Breaker", page_icon="*", layout="wide")
 
 
+# Thread pool executor for running async code from sync Streamlit context
+_executor = ThreadPoolExecutor(max_workers=1)
+
+
 def run_async(coro):
-    """Run async coroutine in sync context."""
-    loop = st.session_state.event_loop
-    return loop.run_until_complete(coro)
+    """Run async coroutine in sync context using a separate thread."""
+    future = _executor.submit(asyncio.run, coro)
+    return future.result()
 
 
 @st.cache_data(show_spinner=False)

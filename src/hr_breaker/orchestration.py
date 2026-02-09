@@ -160,7 +160,7 @@ async def optimize_for_job(
         logger.info("No-shame mode enabled")
 
     for i in range(max_iterations):
-        logger.info(f"Iteration {i + 1}/{max_iterations}")
+        logger.info(f"=== Iteration {i + 1}/{max_iterations} ===")
         ctx = IterationContext(
             iteration=i,
             original_resume=source.content,
@@ -169,7 +169,12 @@ async def optimize_for_job(
         )
         with log_time("optimize_resume"):
             optimized = await optimize_resume(source, job, ctx, no_shame=no_shame, user_instructions=user_instructions)
-        logger.info(f"Optimizer changes: {optimized.changes}")
+        if optimized.changes:
+            logger.info(f"Optimizer changes ({len(optimized.changes)}):")
+            for change in optimized.changes:
+                logger.info(f"  - {change}")
+        else:
+            logger.info("No changes reported by optimizer")
         # Store last attempt for feedback (html or data depending on mode)
         last_attempt = (
             optimized.html
@@ -182,6 +187,7 @@ async def optimize_for_job(
 
         if optimized.pdf_text is None:
             # PDF rendering failed - treat as validation failure
+            logger.info("PDF rendering failed - skipping filters")
             validation = ValidationResult(
                 results=[
                     FilterResult(
@@ -199,10 +205,22 @@ async def optimize_for_job(
                 optimized, job, source, parallel=parallel, no_shame=no_shame
             )
 
+        # Log filter results
+        passed_filters = [r.filter_name for r in validation.results if r.passed]
+        failed_filters = [r.filter_name for r in validation.results if not r.passed]
+        logger.info(
+            f"Iteration {i + 1} results: {len(passed_filters)} passed, {len(failed_filters)} failed"
+        )
+        if failed_filters:
+            logger.info(f"  Failed: {', '.join(failed_filters)}")
+        for r in validation.results:
+            logger.info(f"  {r.filter_name}: {r.score:.2f}/{r.threshold:.2f} {'✓' if r.passed else '✗'}")
+
         if on_iteration:
             on_iteration(i, optimized, validation)
 
         if validation.passed:
+            logger.info("All filters passed - optimization complete")
             break
 
     # Post-processing: translate if target language is not English

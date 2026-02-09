@@ -39,18 +39,43 @@ logger = setup_logging()
 class Settings(BaseSettings):
     """Application settings. Reads from env vars (uppercased field names)."""
 
-    # API key (accepts GOOGLE_API_KEY as fallback for backward compat)
+    # API keys
     gemini_api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     )
+    openai_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("OPENAI_API_KEY"),
+    )
+    openai_base_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("OPENAI_BASE_URL"),
+    )
+    anthropic_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ANTHROPIC_API_KEY"),
+    )
 
-    pro_model: str = "gemini/gemini-3-pro-preview"
-    flash_model: str = "gemini/gemini-3-flash-preview"
+    # Model provider (e.g. "anthropic", "openai", "" for default/google)
+    model_provider: str = Field(
+        default="",
+        validation_alias=AliasChoices("MODEL_PROVIDER"),
+    )
+
+    pro_model: str = Field(
+        default="gemini/gemini-3-pro-preview",
+        validation_alias=AliasChoices("PRO_MODEL", "GEMINI_PRO_MODEL"),
+    )
+    flash_model: str = Field(
+        default="gemini/gemini-3-flash-preview",
+        validation_alias=AliasChoices("FLASH_MODEL", "GEMINI_FLASH_MODEL"),
+    )
     reasoning_effort: str = "medium"
     cache_dir: Path = Path(".cache/resumes")
     output_dir: Path = Path("output")
     max_iterations: int = 5
+    max_result_retries: int = 3
     pass_threshold: float = 0.7
     fast_mode: bool = Field(
         default=True,
@@ -100,6 +125,24 @@ class Settings(BaseSettings):
     def model_post_init(self, __context: Any) -> None:
         if self.gemini_api_key and "GEMINI_API_KEY" not in os.environ:
             os.environ["GEMINI_API_KEY"] = self.gemini_api_key
+        if self.openai_api_key and "OPENAI_API_KEY" not in os.environ:
+            os.environ["OPENAI_API_KEY"] = self.openai_api_key
+        if self.openai_base_url and "OPENAI_BASE_URL" not in os.environ:
+            os.environ["OPENAI_BASE_URL"] = self.openai_base_url
+        if self.anthropic_api_key and "ANTHROPIC_API_KEY" not in os.environ:
+            os.environ["ANTHROPIC_API_KEY"] = self.anthropic_api_key
+
+    def _get_full_model_name(self, model: str) -> str:
+        """Construct full litellm model name with provider prefix if needed."""
+        provider = self.model_provider.strip().lower()
+        if not provider:
+            # No provider set — use model string as-is (assumes litellm format like "gemini/...")
+            return model
+        # If the model already has a provider prefix (contains "/"), use as-is
+        if "/" in model:
+            return model
+        # Otherwise prepend provider: e.g. "anthropic/claude-sonnet-4-20250514"
+        return f"{provider}/{model}"
 
 
 @lru_cache
@@ -108,16 +151,25 @@ def get_settings() -> Settings:
 
 
 def get_pro_model() -> LiteLLMModel:
-    return LiteLLMModel(model_name=get_settings().pro_model)
+    settings = get_settings()
+    return LiteLLMModel(model_name=settings._get_full_model_name(settings.pro_model))
 
 
 def get_flash_model() -> LiteLLMModel:
-    return LiteLLMModel(model_name=get_settings().flash_model)
+    settings = get_settings()
+    return LiteLLMModel(model_name=settings._get_full_model_name(settings.flash_model))
 
 
 def get_model_settings() -> dict[str, Any] | None:
-    """Get model settings with reasoning effort config."""
+    """Get model settings with reasoning effort config.
+    
+    Only applies Google thinking config when using Google provider.
+    Anthropic/OpenAI don't support reasoning_effort.
+    """
     settings = get_settings()
-    if settings.reasoning_effort and settings.reasoning_effort != "none":
-        return {"reasoning_effort": settings.reasoning_effort}
+    provider = settings.model_provider.strip().lower()
+    # Only apply reasoning_effort for Google/Gemini (default) provider
+    if provider in ("", "google-gla", "gemini"):
+        if settings.reasoning_effort and settings.reasoning_effort != "none":
+            return {"reasoning_effort": settings.reasoning_effort}
     return None

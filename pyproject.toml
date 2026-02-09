@@ -32,6 +32,7 @@ dependencies = [
     "playwright>=1.40",
     "watchdog>=6.0.0",
     "pydantic-settings>=2.12.0",
+    "anthropic",
 ]
 
 [project.scripts]

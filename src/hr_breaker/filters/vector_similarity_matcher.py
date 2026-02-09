@@ -1,3 +1,5 @@
+import os
+
 from litellm import aembedding as litellm_aembedding
 
 from hr_breaker.config import get_settings
@@ -25,6 +27,17 @@ class VectorSimilarityMatcher(BaseFilter):
         source: ResumeSource,
     ) -> FilterResult:
         settings = get_settings()
+
+        # Skip when GOOGLE_API_KEY is not set (embedding model requires it)
+        if not os.environ.get("GOOGLE_API_KEY") and not os.environ.get("GEMINI_API_KEY"):
+            return FilterResult(
+                filter_name=self.name,
+                passed=True,
+                score=1.0,
+                threshold=self.threshold,
+                issues=["Skipped: GOOGLE_API_KEY not set (needed for embedding model)"],
+                suggestions=[],
+            )
 
         if optimized.pdf_text is None:
             return FilterResult(

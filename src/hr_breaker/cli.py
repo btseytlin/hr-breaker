@@ -1,6 +1,7 @@
 """CLI interface for HR-Breaker."""
 
 import asyncio
+import os
 from pathlib import Path
 
 import click
@@ -97,6 +98,27 @@ def optimize(
     RESUME_PATH: Path to resume file (.tex, .md, .txt, .pdf, etc.)
     JOB_INPUT: URL or path to file with job description
     """
+    # Provider-aware API key validation
+    settings = get_settings()
+    provider = settings.model_provider.strip().lower()
+    if provider == "anthropic":
+        if not os.environ.get("ANTHROPIC_API_KEY") and not settings.anthropic_api_key:
+            raise click.ClickException(
+                "ANTHROPIC_API_KEY not set. Add it to .env or export it."
+            )
+    elif provider == "openai":
+        if not os.environ.get("OPENAI_API_KEY") and not settings.openai_api_key:
+            raise click.ClickException(
+                "OPENAI_API_KEY not set. Add it to .env or export it."
+            )
+    else:
+        if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GOOGLE_API_KEY") and not settings.gemini_api_key:
+            raise click.ClickException(
+                "GEMINI_API_KEY (or GOOGLE_API_KEY) not set. Add it to .env or export it."
+            )
+
+    click.echo(f"🔑 Provider: {provider or 'google/gemini (default)'}")
+
     resume_content = load_resume_content(resume_path)
 
     # Get job text (sync - may need user interaction for Cloudflare)
@@ -106,12 +128,12 @@ def optimize(
     debug_dir: Path | None = None
 
     def on_iteration(i, optimized, validation):
-        status = "PASS" if validation.passed else "FAIL"
+        status = "✅ PASS" if validation.passed else "❌ FAIL"
         scores = ", ".join(
             f"{r.filter_name}:{r.score:.2f}/{r.threshold:.2f}"
             for r in validation.results
         )
-        click.echo(f"  Iteration {i + 1}: {status} [{scores}]")
+        click.echo(f"  📋 Iteration {i + 1}: {status} [{scores}]")
 
         # Save intermediate PDF in debug mode
         if debug and debug_dir:
@@ -142,12 +164,14 @@ def optimize(
     # Run all async work in single event loop
     async def run_optimization():
         nonlocal debug_dir
+        click.echo("📄 Extracting name from resume...")
         first_name, last_name = await extract_name(resume_content)
-        click.echo(f"Resume: {first_name or 'Unknown'} {last_name or ''}")
+        click.echo(f"👤 Resume: {first_name or 'Unknown'} {last_name or ''}")
 
         # Parse job first to get company/role for debug dir
+        click.echo("📋 Parsing job posting...")
         job = await parse_job_posting(job_text)
-        click.echo(f"Job: {job.title} at {job.company}")
+        click.echo(f"🏢 Job: {job.title} at {job.company}")
 
         if debug:
             debug_dir = pdf_storage.generate_debug_dir(job.company, job.title)
@@ -155,7 +179,7 @@ def optimize(
         mode = "sequential" if seq else "parallel"
         shame_mode = " [no-shame]" if no_shame else ""
         lang_label = f" [lang: {lang_code}]" if target_language else ""
-        click.echo(f"Optimizing (mode: {mode}{shame_mode}{lang_label})...")
+        click.echo(f"🚀 Optimizing (mode: {mode}{shame_mode}{lang_label})...")
 
         source = ResumeSource(
             content=resume_content,
@@ -180,7 +204,7 @@ def optimize(
     )
 
     if not validation.passed:
-        click.echo("Warning: Not all filters passed")
+        click.echo("⚠️  Warning: Not all filters passed")
 
     # Save final PDF (reuse bytes from last iteration)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -197,7 +221,7 @@ def optimize(
         )
 
     if not optimized.pdf_bytes:
-        raise click.ClickException("No PDF generated (render failed)")
+        raise click.ClickException("❌ No PDF generated (render failed)")
     output.write_bytes(optimized.pdf_bytes)
 
     pdf_record = GeneratedPDF(
@@ -210,7 +234,7 @@ def optimize(
     )
     pdf_storage.save_record(pdf_record)
 
-    click.echo(f"PDF saved: {output}")
+    click.echo(f"✅ PDF saved: {output}")
 
 
 @cli.command("list")
