@@ -31,7 +31,7 @@ class WaybackScraper(BaseScraper):
         logger.info(f"Using Wayback snapshot: {snapshot_url}")
 
         with httpx.Client(
-            follow_redirects=True, timeout=self.timeout
+            follow_redirects=True, timeout=self.timeout, trust_env=True
         ) as client:
             response = client.get(snapshot_url)
             response.raise_for_status()
@@ -50,7 +50,7 @@ class WaybackScraper(BaseScraper):
         }
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx.Client(timeout=self.timeout, trust_env=True) as client:
                 response = client.get(WAYBACK_CDX_API, params=params)
                 response.raise_for_status()
                 data = response.json()

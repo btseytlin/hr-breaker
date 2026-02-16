@@ -1,5 +1,7 @@
 import logging
 
+from hr_breaker.config import get_settings
+
 from .base import BaseScraper, CloudflareBlockedError, ScrapingError
 
 logger = logging.getLogger(__name__)
@@ -21,6 +23,9 @@ class PlaywrightScraper(BaseScraper):
 
     def __init__(self, timeout: float = 60000):  # ms for playwright
         self.timeout = timeout
+        settings = get_settings()
+        self.proxy_url = settings.proxy_url
+        self.proxy_bypass = settings.no_proxy
 
     def scrape(self, url: str) -> str:
         """Scrape job posting using headless browser."""
@@ -32,7 +37,13 @@ class PlaywrightScraper(BaseScraper):
 
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
+                proxy_config = None
+                if self.proxy_url:
+                    proxy_config = {"server": self.proxy_url}
+                    if self.proxy_bypass:
+                        proxy_config["bypass"] = self.proxy_bypass
+
+                browser = p.chromium.launch(headless=True, proxy=proxy_config)
                 try:
                     context = browser.new_context(
                         user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
