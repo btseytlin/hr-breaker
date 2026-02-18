@@ -1,0 +1,26 @@
+{
+  "title": "Backend Engineer",
+  "company": "Acme Corp",
+  "requirements": [
+    "Strong Python experience",
+    "Experience with Django or similar web frameworks",
+    "Production experience with PostgreSQL",
+    "Familiarity with REST, authentication, and API design",
+    "Docker experience"
+  ],
+  "keywords": [
+    "python",
+    "django",
+    "postgresql",
+    "sql",
+    "rest",
+    "api",
+    "docker",
+    "aws",
+    "redis",
+    "authentication"
+  ],
+  "description": "Build reliable, scalable APIs and data services; improve performance, reliability, and observability.",
+  "raw_text": "Backend Engineer — Acme Corp\n\nWe are looking for a Backend Engineer to build reliable, scalable APIs and data services.\n\nResponsibilities\n- Build and maintain backend services and REST APIs\n- Design data models and write efficient SQL queries\n- Improve performance, reliability, and observability\n- Collaborate with product and frontend teams\n\nRequirements\n- Strong Python experience\n- Experience with Django or similar web frameworks\n- Production experience with PostgreSQL\n- Familiarity with REST, authentication, and API design\n- Docker experience\n\nNice to have\n- AWS experience\n- Redis / background job processing\n"
+}
+

@@ -1,0 +1,24 @@
+Alex Kim
+alex.kim@example.com | https://linkedin.com/in/alex-kim | https://github.com/alexkim
+
+SUMMARY
+Backend engineer focused on Python services and data-heavy systems. Built REST APIs, automated deployments,
+and improved reliability/latency in production.
+
+EXPERIENCE
+Acme Analytics — Backend Engineer (Jan 2022 – Present)
+- Built and maintained Python/Django APIs used by 50k+ monthly active users.
+- Designed PostgreSQL schemas and optimized slow queries (reduced p95 latency by ~30%).
+- Implemented background processing with Celery/Redis for long-running tasks.
+- Containerized services with Docker and shipped to AWS (ECS), improving deploy consistency.
+
+Northwind Tools — Software Engineer (Jun 2019 – Dec 2021)
+- Developed internal microservices in Python (FastAPI) and integrated with third-party APIs.
+- Added CI checks (tests + lint) and improved incident response runbooks.
+
+EDUCATION
+BS Computer Science — Example State University (2015 – 2019)
+
+SKILLS
+Python, Django, FastAPI, PostgreSQL, Redis, REST APIs, Docker, AWS, Git
+

@@ -1,0 +1,21 @@
+Backend Engineer — Acme Corp
+
+We are looking for a Backend Engineer to build reliable, scalable APIs and data services.
+
+Responsibilities
+- Build and maintain backend services and REST APIs
+- Design data models and write efficient SQL queries
+- Improve performance, reliability, and observability
+- Collaborate with product and frontend teams
+
+Requirements
+- Strong Python experience
+- Experience with Django or similar web frameworks
+- Production experience with PostgreSQL
+- Familiarity with REST, authentication, and API design
+- Docker experience
+
+Nice to have
+- AWS experience
+- Redis / background job processing
+
