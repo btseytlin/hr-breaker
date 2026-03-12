@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import platform
 import subprocess
 import uuid
@@ -98,6 +99,23 @@ async def get_app_settings():
         "pro_model": settings.pro_model,
         "flash_model": settings.flash_model,
         "max_iterations": settings.max_iterations,
+        "embedding_model": settings.embedding_model,
+        "reasoning_effort": settings.reasoning_effort,
+        "filter_thresholds": {
+            "hallucination": settings.filter_hallucination_threshold,
+            "keyword": settings.filter_keyword_threshold,
+            "llm": settings.filter_llm_threshold,
+            "vector": settings.filter_vector_threshold,
+            "ai_generated": settings.filter_ai_generated_threshold,
+            "translation": settings.filter_translation_threshold,
+        },
+        "api_keys_set": {
+            "gemini": bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")),
+            "openrouter": bool(os.environ.get("OPENROUTER_API_KEY")),
+            "openai": bool(os.environ.get("OPENAI_API_KEY")),
+            "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY")),
+            "moonshot": bool(os.environ.get("MOONSHOT_API_KEY")),
+        },
     }
 
 

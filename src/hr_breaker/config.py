@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import os
 from functools import lru_cache
@@ -120,6 +121,73 @@ def get_pro_model() -> LiteLLMModel:
 
 def get_flash_model() -> LiteLLMModel:
     return LiteLLMModel(model_name=get_settings().flash_model)
+
+
+_FIELD_ENV_MAP = {
+    "pro_model": "PRO_MODEL",
+    "flash_model": "FLASH_MODEL",
+    "embedding_model": "EMBEDDING_MODEL",
+    "reasoning_effort": "REASONING_EFFORT",
+    "filter_hallucination_threshold": "FILTER_HALLUCINATION_THRESHOLD",
+    "filter_keyword_threshold": "FILTER_KEYWORD_THRESHOLD",
+    "filter_llm_threshold": "FILTER_LLM_THRESHOLD",
+    "filter_vector_threshold": "FILTER_VECTOR_THRESHOLD",
+    "filter_ai_generated_threshold": "FILTER_AI_GENERATED_THRESHOLD",
+    "filter_translation_threshold": "FILTER_TRANSLATION_THRESHOLD",
+}
+
+_API_KEY_ENV_MAP = {
+    "gemini": "GEMINI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "moonshot": "MOONSHOT_API_KEY",
+}
+
+
+@contextlib.contextmanager
+def settings_override(overrides: dict | None):
+    """Temporarily override settings via env vars, restoring originals on exit."""
+    if not overrides:
+        yield
+        return
+
+    saved: dict[str, str | None] = {}
+
+    # Apply field overrides
+    for field, value in overrides.items():
+        if field == "api_keys":
+            continue
+        if value is None:
+            continue
+        env_var = _FIELD_ENV_MAP.get(field)
+        if env_var is None:
+            continue
+        saved[env_var] = os.environ.get(env_var)
+        os.environ[env_var] = str(value)
+
+    # Apply API key overrides
+    api_keys = overrides.get("api_keys")
+    if api_keys:
+        for provider, key_value in api_keys.items():
+            if key_value is None:
+                continue
+            env_var = _API_KEY_ENV_MAP.get(provider)
+            if env_var is None:
+                continue
+            saved[env_var] = os.environ.get(env_var)
+            os.environ[env_var] = str(key_value)
+
+    get_settings.cache_clear()
+    try:
+        yield
+    finally:
+        for env_var, original in saved.items():
+            if original is None:
+                os.environ.pop(env_var, None)
+            else:
+                os.environ[env_var] = original
+        get_settings.cache_clear()
 
 
 def get_model_settings() -> dict[str, Any] | None:
