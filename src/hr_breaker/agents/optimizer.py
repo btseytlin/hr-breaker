@@ -15,6 +15,7 @@ from hr_breaker.models import (
     OptimizedResume,
     ResumeSource,
 )
+from hr_breaker.models.language import Language
 from hr_breaker.services.length_estimator import estimate_content_length
 from hr_breaker.services.renderer import HTMLRenderer, RenderError
 from hr_breaker.utils import extract_text_from_html
@@ -232,6 +233,7 @@ async def optimize_resume(
     context: IterationContext,
     no_shame: bool = False,
     user_instructions: str | None = None,
+    language: Language | None = None,
 ) -> OptimizedResume:
     """Optimize resume for job posting."""
     prompt = f"""## Original Resume:
@@ -254,6 +256,20 @@ IMPORTANT: Treat the above "User Instructions" as GROUND TRUTH about the candida
 - You MUST incorporate these instructions into the resume if they provide new information (like "I have experience with X").
 - If the instructions give stylistic guidance (e.g. "Focus on leadership"), follow them.
 - These instructions override the "only use original content" rule because they ARE provided by the user.
+"""
+
+    if language is not None and language.code != "en":
+        prompt += f"""
+## TARGET LANGUAGE: {language.english_name} ({language.native_name})
+
+Generate the resume HTML in {language.english_name} language.
+- Use professional terminology appropriate for the {language.english_name} job market
+- Write naturally as a native {language.english_name} speaker — NOT machine translation
+- Maintain formal professional resume tone appropriate for {language.english_name}-language resumes
+- Keep in English: company names (if originally english), product names, certifications (AWS, PMP), programming languages/frameworks/tools (Python, React, Docker), URLs, email addresses
+- Keep widely recognized English technical terms that are standard in {language.english_name}-speaking professional community
+- Use accepted {language.english_name} equivalents where they exist and are commonly used
+- Text often expands in {language.english_name} vs English — compensate with concise phrasing, shorter synonyms, or abbreviations accepted in {language.english_name} professional context. Do NOT drop content — condense wording instead.
 """
 
     if context.last_attempt:
