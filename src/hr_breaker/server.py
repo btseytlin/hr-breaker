@@ -1,0 +1,532 @@
+"""FastAPI server for HR-Breaker web UI."""
+
+import asyncio
+import json
+import platform
+import subprocess
+import uuid
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from hr_breaker.agents import extract_name, parse_job_posting
+from hr_breaker.config import get_settings, logger
+from hr_breaker.models import (
+    GeneratedPDF,
+    ResumeSource,
+    SUPPORTED_LANGUAGES,
+    get_language,
+)
+from hr_breaker.orchestration import optimize_for_job
+from hr_breaker.services import (
+    PDFStorage,
+    ResumeCache,
+    scrape_job_posting,
+    ScrapingError,
+    CloudflareBlockedError,
+)
+from hr_breaker.services.pdf_storage import generate_run_id
+from hr_breaker.services.pdf_parser import load_resume_content_from_upload
+
+STATIC_DIR = Path(__file__).parent / "static"
+
+# NOTE: Module-level mutable state requires single-worker uvicorn (the default).
+# Do not use multiple workers — resume_store and _active_optimization are not shared.
+
+# In-memory resume store (populated from cache on startup)
+resume_store: dict[str, ResumeSource] = {}
+
+# Active optimization singleton — only one at a time
+# When running: {"id": str, "task": asyncio.Task, "events": list[str], "subscribers": list[asyncio.Queue]}
+_active_optimization: dict | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    cache = ResumeCache()
+    for resume in cache.list_all():
+        resume_store[resume.checksum] = resume
+    yield
+
+
+app = FastAPI(title="HR-Breaker", lifespan=lifespan)
+
+
+# --- API Models ---
+
+class PasteResumeRequest(BaseModel):
+    content: str
+
+
+class ScrapeJobRequest(BaseModel):
+    url: str
+
+
+class OptimizeRequest(BaseModel):
+    resume_checksum: str
+    job_text: str
+    sequential: bool = False
+    debug: bool = True
+    no_shame: bool = False
+    language: str = "en"
+    max_iterations: int | None = None
+    instructions: str | None = None
+
+
+# --- Endpoints ---
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    index_path = STATIC_DIR / "index.html"
+    return HTMLResponse(index_path.read_text(encoding="utf-8"))
+
+
+@app.get("/api/settings")
+async def get_app_settings():
+    settings = get_settings()
+    return {
+        "languages": [
+            {"code": lang.code, "english_name": lang.english_name, "native_name": lang.native_name}
+            for lang in SUPPORTED_LANGUAGES
+        ],
+        "default_language": settings.default_language,
+        "pro_model": settings.pro_model,
+        "flash_model": settings.flash_model,
+        "max_iterations": settings.max_iterations,
+    }
+
+
+@app.post("/api/resume/upload")
+async def upload_resume(file: UploadFile = File(...)):
+    data = await file.read()
+    content = load_resume_content_from_upload(file.filename, data)
+    first_name, last_name = await extract_name(content)
+
+    source = ResumeSource(content=content, first_name=first_name, last_name=last_name)
+
+    # Cache
+    cache = ResumeCache()
+    cache.put(source)
+    resume_store[source.checksum] = source
+
+    return {
+        "checksum": source.checksum,
+        "first_name": first_name,
+        "last_name": last_name,
+        "content_preview": content[:200],
+    }
+
+
+@app.post("/api/resume/paste")
+async def paste_resume(req: PasteResumeRequest):
+    content = req.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty content")
+
+    first_name, last_name = await extract_name(content)
+    source = ResumeSource(content=content, first_name=first_name, last_name=last_name)
+
+    cache = ResumeCache()
+    cache.put(source)
+    resume_store[source.checksum] = source
+
+    return {
+        "checksum": source.checksum,
+        "first_name": first_name,
+        "last_name": last_name,
+        "content_preview": content[:200],
+    }
+
+
+@app.get("/api/resume/cached")
+async def cached_resumes():
+    cache = ResumeCache()
+    resumes = cache.list_all()
+    # Refresh store
+    for r in resumes:
+        resume_store[r.checksum] = r
+    return [
+        {
+            "checksum": r.checksum,
+            "first_name": r.first_name,
+            "last_name": r.last_name,
+            "content_preview": r.content[:200],
+            "instructions": r.instructions,
+        }
+        for r in resumes
+    ]
+
+
+@app.post("/api/job/scrape")
+async def scrape_job(req: ScrapeJobRequest):
+    try:
+        text = scrape_job_posting(req.url)
+        return {"text": text}
+    except CloudflareBlockedError:
+        return {"error": "cloudflare", "message": "Site has bot protection. Copy & paste instead."}
+    except ScrapingError as e:
+        return {"error": "scrape_failed", "message": str(e)}
+
+
+def _sse_event(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _emit(event: str, data: dict) -> None:
+    """Record SSE event for replay and push to all subscriber queues."""
+    global _active_optimization
+    if _active_optimization is None:
+        return
+    msg = _sse_event(event, data)
+    _active_optimization["events"].append(msg)
+    _broadcast(msg)
+
+
+def _cleanup_active() -> None:
+    """Clear active optimization state."""
+    global _active_optimization
+    _active_optimization = None
+
+
+@app.post("/api/optimize")
+async def optimize_endpoint(req: OptimizeRequest):
+    global _active_optimization
+
+    # Concurrent prevention: reject if an optimization is already running
+    if _active_optimization is not None and not _active_optimization["task"].done():
+        return JSONResponse(
+            status_code=409,
+            content={"error": "Optimization already running", "id": _active_optimization["id"]},
+        )
+
+    # Clear stale completed optimization
+    _cleanup_active()
+
+    source = resume_store.get(req.resume_checksum)
+    if not source:
+        return JSONResponse(status_code=400, content={"error": "Resume not found. Upload or paste first."})
+
+    opt_id = str(uuid.uuid4())
+    events: list[str] = []
+
+    _active_optimization = {"id": opt_id, "task": None, "events": events, "subscribers": []}
+
+    task = asyncio.create_task(_run_optimization(req, source))
+    _active_optimization["task"] = task
+
+    # Return SSE stream (first event is 'started' with the id)
+    return StreamingResponse(
+        _sse_generator(opt_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _sse_generator(opt_id: str) -> AsyncGenerator[str, None]:
+    """Stream events for the given optimization. Replays past events then streams live."""
+    global _active_optimization
+    if _active_optimization is None or _active_optimization["id"] != opt_id:
+        return
+
+    # Subscribe before taking the events snapshot to avoid missing events
+    live_queue: asyncio.Queue = asyncio.Queue()
+    _active_optimization.setdefault("subscribers", []).append(live_queue)
+
+    try:
+        # Replay already-accumulated events
+        events_snapshot = list(_active_optimization["events"])
+        for evt in events_snapshot:
+            yield evt
+
+        # If task already done, no more live events
+        if _active_optimization["task"] and _active_optimization["task"].done():
+            return
+
+        while True:
+            msg = await live_queue.get()
+            if msg is None:
+                break
+            yield msg
+    finally:
+        if _active_optimization and "subscribers" in _active_optimization:
+            try:
+                _active_optimization["subscribers"].remove(live_queue)
+            except ValueError:
+                pass
+
+
+@app.get("/api/optimize/stream/{optimization_id}")
+async def stream_optimization(optimization_id: str):
+    """Reconnect to an active or completed optimization's SSE stream."""
+    global _active_optimization
+
+    if _active_optimization is None or _active_optimization["id"] != optimization_id:
+        return JSONResponse(status_code=404, content={"error": "Optimization not found"})
+
+    async def reconnect_generator() -> AsyncGenerator[str, None]:
+        # Replay all accumulated events
+        events_snapshot = list(_active_optimization["events"])
+        for evt in events_snapshot:
+            yield evt
+
+        # If task is done, no more live events
+        if _active_optimization["task"].done():
+            return
+
+        # Stream live events from a new queue subscriber
+        # We create a secondary queue that receives future events
+        live_queue: asyncio.Queue = asyncio.Queue()
+        _active_optimization.setdefault("subscribers", []).append(live_queue)
+        try:
+            while True:
+                msg = await live_queue.get()
+                if msg is None:
+                    break
+                yield msg
+        finally:
+            if _active_optimization and "subscribers" in _active_optimization:
+                try:
+                    _active_optimization["subscribers"].remove(live_queue)
+                except ValueError:
+                    pass
+
+    return StreamingResponse(
+        reconnect_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/api/optimize/cancel")
+async def cancel_optimization():
+    global _active_optimization
+
+    if _active_optimization is None:
+        return JSONResponse(status_code=404, content={"error": "No active optimization"})
+
+    task = _active_optimization["task"]
+    if not task.done():
+        task.cancel()
+        # Wait for cancellation to propagate
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    _cleanup_active()
+    return {"ok": True}
+
+
+@app.get("/api/optimize/status")
+async def optimization_status():
+    global _active_optimization
+
+    if _active_optimization is None:
+        return {"active": False, "id": None, "done": False}
+
+    task_done = _active_optimization["task"].done() if _active_optimization["task"] else False
+    return {
+        "active": True,
+        "id": _active_optimization["id"],
+        "done": task_done,
+    }
+
+
+def _broadcast(msg: str | None) -> None:
+    """Send a message to all subscriber queues (for reconnected clients)."""
+    global _active_optimization
+    if _active_optimization is None:
+        return
+    for sub_queue in _active_optimization.get("subscribers", []):
+        sub_queue.put_nowait(msg)
+
+
+async def _run_optimization(req: OptimizeRequest, source: ResumeSource):
+    global _active_optimization
+    try:
+        opt_id = _active_optimization["id"]
+        _emit("started", {"id": opt_id})
+
+        settings = get_settings()
+        pdf_storage = PDFStorage()
+        run_id = generate_run_id()
+
+        # Resolve language
+        lang_code = req.language
+        target_language = get_language(lang_code) if lang_code != "en" else None
+
+        _emit("status", {"message": "Parsing job posting..."})
+
+        job = await parse_job_posting(req.job_text)
+
+        _emit("status", {"message": f"Job: {job.title} at {job.company}"})
+
+        # Setup debug dir
+        debug_dir = None
+        if req.debug:
+            debug_dir = pdf_storage.generate_debug_dir(job.company, job.title, run_id=run_id)
+
+        max_iterations = req.max_iterations or settings.max_iterations
+
+        mode = "sequential" if req.sequential else "parallel"
+        _emit("status", {"message": f"Optimizing (mode: {mode}, max: {max_iterations})..."})
+
+        # Update instructions on source if provided
+        if req.instructions:
+            source = source.model_copy(update={"instructions": req.instructions})
+            cache = ResumeCache()
+            cache.put(source)
+
+        def on_iteration(i, optimized, validation):
+            # Save debug files
+            if req.debug and debug_dir:
+                if optimized.html:
+                    (debug_dir / f"iteration_{i + 1}.html").write_text(optimized.html, encoding="utf-8")
+                if optimized.pdf_bytes:
+                    (debug_dir / f"iteration_{i + 1}.pdf").write_bytes(optimized.pdf_bytes)
+
+            # Send iteration event
+            results_data = [
+                {
+                    "filter_name": r.filter_name,
+                    "passed": r.passed,
+                    "score": r.score,
+                    "threshold": r.threshold,
+                    "skipped": r.skipped,
+                    "issues": r.issues,
+                    "suggestions": r.suggestions,
+                }
+                for r in validation.results
+            ]
+            _emit("iteration", {
+                "iteration": i + 1,
+                "max_iterations": max_iterations,
+                "passed": validation.passed,
+                "changes": optimized.changes,
+                "results": results_data,
+            })
+
+        optimized, validation, _ = await optimize_for_job(
+            source,
+            max_iterations=max_iterations,
+            on_iteration=on_iteration,
+            job=job,
+            parallel=not req.sequential,
+            no_shame=req.no_shame,
+            user_instructions=req.instructions,
+            language=target_language,
+        )
+
+        # Save PDF
+        pdf_filename = None
+        if optimized and optimized.pdf_bytes:
+            pdf_path = pdf_storage.generate_path(
+                source.first_name, source.last_name, job.company, job.title,
+                lang_code=lang_code,
+                run_id=run_id,
+            )
+            pdf_path.parent.mkdir(parents=True, exist_ok=True)
+            pdf_path.write_bytes(optimized.pdf_bytes)
+            pdf_filename = pdf_path.name
+
+            pdf_record = GeneratedPDF(
+                path=pdf_path,
+                source_checksum=source.checksum,
+                company=job.company,
+                job_title=job.title,
+                first_name=source.first_name,
+                last_name=source.last_name,
+            )
+            pdf_storage.save_record(pdf_record)
+
+        # Final results
+        final_results = [
+            {
+                "filter_name": r.filter_name,
+                "passed": r.passed,
+                "score": r.score,
+                "threshold": r.threshold,
+                "skipped": r.skipped,
+                "issues": r.issues,
+                "suggestions": r.suggestions,
+            }
+            for r in validation.results
+        ]
+        _emit("complete", {
+            "pdf_filename": pdf_filename,
+            "passed": validation.passed,
+            "validation": final_results,
+            "job": {"title": job.title, "company": job.company},
+        })
+
+    except asyncio.CancelledError:
+        _emit("cancelled", {"message": "Optimization cancelled by user"})
+        raise
+    except Exception as e:
+        logger.exception("Optimization error")
+        _emit("error", {"message": str(e)})
+    finally:
+        # Signal end of stream to all subscribers
+        if _active_optimization is not None:
+            _broadcast(None)
+
+
+@app.get("/api/history")
+async def list_history():
+    pdf_storage = PDFStorage()
+    pdfs = pdf_storage.list_all()
+    return [
+        {
+            "filename": pdf.path.name,
+            "company": pdf.company,
+            "job_title": pdf.job_title,
+            "timestamp": pdf.timestamp.isoformat(),
+            "first_name": pdf.first_name,
+            "last_name": pdf.last_name,
+            "exists": pdf.path.exists(),
+        }
+        for pdf in pdfs
+    ]
+
+
+@app.get("/api/pdf/{filename}")
+async def download_pdf(filename: str):
+    settings = get_settings()
+    pdf_path = settings.output_dir / filename
+    if not pdf_path.exists():
+        return {"error": "PDF not found"}
+    return FileResponse(pdf_path, media_type="application/pdf", filename=filename)
+
+
+@app.post("/api/open-folder")
+async def open_folder():
+    settings = get_settings()
+    folder = str(settings.output_dir.resolve())
+    settings.output_dir.mkdir(parents=True, exist_ok=True)
+
+    system = platform.system()
+    if system == "Darwin":
+        subprocess.Popen(["open", folder])
+    elif system == "Windows":
+        subprocess.Popen(["explorer", folder])
+    else:
+        subprocess.Popen(["xdg-open", folder])
+
+    return {"ok": True}
+
+
+# Mount static files LAST (catch-all)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

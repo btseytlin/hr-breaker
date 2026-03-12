@@ -1,9 +1,12 @@
 """CLI interface for HR-Breaker."""
 
 import asyncio
+import threading
+import webbrowser
 from pathlib import Path
 
 import click
+import uvicorn
 
 from hr_breaker.agents import extract_name, parse_job_posting
 from hr_breaker.config import get_settings
@@ -276,6 +279,20 @@ def _read_multiline_input() -> str:
     if not text:
         raise click.ClickException("No job description provided")
     return text
+
+
+@cli.command()
+@click.option("--port", "-p", type=int, default=8899, help="Port to serve on")
+@click.option("--open/--no-open", default=True, help="Auto-open browser")
+def serve(port: int, open: bool):
+    """Start the web UI server."""
+    url = f"http://localhost:{port}"
+    click.echo(f"Starting HR-Breaker at {url}")
+
+    if open:
+        threading.Timer(1.5, webbrowser.open, args=[url]).start()
+
+    uvicorn.run("hr_breaker.server:app", host="0.0.0.0", port=port, log_level="warning")
 
 
 if __name__ == "__main__":

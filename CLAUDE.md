@@ -18,13 +18,15 @@ Tool for optimizing resumes for job postings and passing automated filters.
 
 ## Architecture
 
-1. Streamlit frontend
-2. Pydantic-AI LLM agent framework + pydantic-ai-litellm (any LLM provider)
-3. Default: Google Gemini models (configurable to OpenAI, Anthropic, etc. via litellm)
-4. Modular filter system - easy to add new checks
-5. Resume caching - input once, apply to many jobs
+1. FastAPI backend (async-native, serves static files + API)
+2. Alpine.js + htmx frontend (CDN-loaded, zero build steps, in `src/hr_breaker/static/`)
+3. SSE (Server-Sent Events) for real-time optimization progress
+4. Pydantic-AI LLM agent framework + pydantic-ai-litellm (any LLM provider)
+5. Default: Google Gemini models (configurable to OpenAI, Anthropic, etc. via litellm)
+6. Modular filter system - easy to add new checks
+7. Resume caching - input once, apply to many jobs
 
-Python: 3.10–3.13 (3.14+ breaks asyncio in streamlit thread pools)
+Python: 3.10–3.13
 Package manager: uv
 Always use venv: `source .venv/bin/activate`
 Unit-tests: pytest
@@ -53,9 +55,13 @@ src/hr_breaker/
 ├── services/        # Rendering, scraping, caching
 │   └── scrapers/    # Job scraper implementations
 ├── utils/           # Helpers (retry with backoff, HTML text extraction)
+├── static/          # Frontend (Alpine.js + CSS + JS, served by FastAPI)
+│   ├── index.html   # Single-page app
+│   ├── js/app.js    # Alpine.js state, SSE client, fetch wrappers
+│   └── css/style.css
 ├── orchestration.py # Core optimization loop
-├── main.py          # Streamlit UI
-├── cli.py           # Click CLI
+├── server.py        # FastAPI app (API endpoints + SSE streaming)
+├── cli.py           # Click CLI (optimize, list, serve)
 ├── config.py        # Settings (pydantic-settings BaseSettings, auto-reads env vars)
 └── litellm_patch.py # Monkey-patch for pydantic-ai-litellm vision support
 ```
@@ -95,8 +101,10 @@ To add filter: subclass `BaseFilter`, set `name` and `priority`, use `@FilterReg
 
 ### Commands
 ```bash
-# Web UI
-uv run streamlit run src/hr_breaker/main.py
+# Web UI (FastAPI + Alpine.js, auto-opens browser)
+uv run hr-breaker serve                    # default: http://localhost:8899
+uv run hr-breaker serve -p 3000            # custom port
+uv run hr-breaker serve --no-open          # don't auto-open browser
 
 # CLI
 uv run hr-breaker optimize resume.txt https://example.com/job
