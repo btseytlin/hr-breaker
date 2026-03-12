@@ -22,17 +22,48 @@ body {
     min-height: 100vh;
 }
 
-.layout {
-    display: grid;
-    grid-template-columns: 1fr 280px;
-    gap: 0;
-    min-height: 100vh;
+/* --- Header --- */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+.header h1 { margin: 0; font-size: 1.2rem; }
+
+.header-actions { display: flex; align-items: center; gap: 12px; }
+
+.btn-icon {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    font-size: 1.2rem;
+    display: flex;
+    align-items: center;
+}
+.btn-icon:hover { color: var(--text); background: var(--surface-hover); }
+
+.model-badge {
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--border);
+    color: var(--text-secondary);
 }
 
 /* --- Main content --- */
 .main {
-    padding: 24px 32px;
-    max-width: 960px;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 24px;
 }
 
 h1 {
@@ -111,7 +142,7 @@ h2 {
 
 /* --- Form elements --- */
 input[type="text"], input[type="url"], input[type="number"],
-textarea, select {
+input[type="password"], textarea, select {
     width: 100%;
     padding: 8px 12px;
     background: var(--bg);
@@ -196,6 +227,7 @@ label {
     border: 1px solid var(--border);
 }
 .btn-secondary:hover { background: var(--surface-hover); }
+.btn-danger { background: var(--error); }
 
 /* --- Instructions --- */
 .instructions-area {
@@ -297,28 +329,7 @@ label {
     margin-bottom: 16px;
 }
 
-/* --- Sidebar --- */
-.sidebar {
-    background: var(--surface);
-    border-left: 1px solid var(--border);
-    padding: 20px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    overflow-y: auto;
-    max-height: 100vh;
-    position: sticky;
-    top: 0;
-}
-
-.sidebar h3 {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
+/* --- Settings rows --- */
 .setting-row {
     display: flex;
     align-items: center;
@@ -339,11 +350,96 @@ label {
     flex: 1;
 }
 
-.sidebar-divider {
-    border: none;
-    border-top: 1px solid var(--border);
+/* --- Drawer overlay --- */
+.drawer-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 20;
 }
 
+/* --- Drawer --- */
+.drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 420px;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    z-index: 30;
+    transform: translateX(100%);
+    transition: transform 0.25s ease;
+    display: flex;
+    flex-direction: column;
+}
+.drawer.open { transform: translateX(0); }
+
+.drawer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+}
+.drawer-header h2 { margin: 0; font-size: 1.1rem; }
+
+.drawer-body { flex: 1; overflow-y: auto; }
+
+.drawer-section { border-bottom: 1px solid var(--border); }
+
+.drawer-section-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0;
+    user-select: none;
+}
+.drawer-section-title:hover { color: var(--text); }
+
+.drawer-section-body { padding: 0 20px 16px; }
+
+.drawer-hint { font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 8px; }
+
+/* --- Chevron --- */
+.chevron {
+    display: inline-block;
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid currentColor;
+    transition: transform 0.2s;
+}
+.chevron.open { transform: rotate(180deg); }
+
+/* --- Setting fields --- */
+.setting-field { margin-bottom: 10px; }
+.setting-field label { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 2px; }
+
+/* --- API key input row --- */
+.key-input-row { display: flex; gap: 8px; align-items: center; }
+.key-input-row input { flex: 1; }
+.key-status { font-size: 0.7rem; font-weight: 600; min-width: 28px; text-align: center; }
+.key-set { color: var(--success); }
+.key-unset { color: var(--text-secondary); }
+
+/* --- Threshold slider --- */
+.threshold-row { display: flex; align-items: center; gap: 8px; }
+.threshold-row input[type="range"] { flex: 1; accent-color: var(--accent); }
+.threshold-value { font-size: 0.8rem; color: var(--text-secondary); min-width: 32px; text-align: right; }
+
+/* --- PDF preview --- */
+.pdf-preview { margin: 12px 0; }
+
+/* --- History --- */
 .history-list {
     display: flex;
     flex-direction: column;
@@ -368,11 +464,17 @@ label {
     color: var(--text-secondary);
 }
 
-.model-info {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    line-height: 1.6;
-}
+/* --- Helper classes --- */
+.field-error { color: var(--error); font-size: 0.85rem; margin-bottom: 8px; }
+.file-hint { font-size: 0.8rem; margin-top: 4px; opacity: 0.6; }
+.status-message { margin: 12px 0; font-size: 0.9rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+.result-meta { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; }
+.changes-list { margin-bottom: 8px; }
+.changes-label { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 4px; }
+.change-item { font-size: 0.8rem; margin-left: 8px; }
+.collapse-hint { font-size: 0.8rem; color: var(--text-secondary); }
+.action-row { display: flex; gap: 8px; }
+.empty-hint { font-size: 0.8rem; color: var(--text-secondary); }
 
 /* --- Spinner --- */
 .spinner {
@@ -388,12 +490,6 @@ label {
 
 /* --- Responsive --- */
 @media (max-width: 768px) {
-    .layout { grid-template-columns: 1fr; }
+    .drawer { width: 100%; }
     .input-grid { grid-template-columns: 1fr; }
-    .sidebar {
-        border-left: none;
-        border-top: 1px solid var(--border);
-        max-height: none;
-        position: static;
-    }
 }

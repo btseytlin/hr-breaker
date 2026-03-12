@@ -9,11 +9,24 @@
     <script src="/static/js/app.js"></script>
 </head>
 <body>
-<div class="layout" x-data="app">
+<div x-data="app">
+
+    <!-- Header -->
+    <div class="header">
+        <h1>HR-Breaker</h1>
+        <div class="header-actions">
+            <span class="model-badge" x-text="activeProModel"></span>
+            <button class="btn-icon" @click="drawerOpen = !drawerOpen" title="Settings">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="10" cy="10" r="3"/>
+                    <path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M3.4 3.4l1.4 1.4M15.2 15.2l1.4 1.4M3.4 16.6l1.4-1.4M15.2 4.8l1.4-1.4"/>
+                </svg>
+            </button>
+        </div>
+    </div>
 
     <!-- Main content -->
     <div class="main">
-        <h1>HR-Breaker</h1>
 
         <!-- Resume + Job input grid -->
         <div class="input-grid">
@@ -40,8 +53,7 @@
                 </template>
 
                 <!-- Input state -->
-                <div x-show="resume.error" style="color: var(--error); font-size: 0.85rem; margin-bottom: 8px"
-                     x-text="resume.error"></div>
+                <div x-show="resume.error" class="field-error" x-text="resume.error"></div>
 
                 <template x-if="!resume.loaded">
                     <div>
@@ -60,7 +72,7 @@
                                 <template x-if="!resume.loading">
                                     <div>
                                         <div>Drop file or click to browse</div>
-                                        <div style="font-size: 0.8rem; margin-top: 4px; opacity: 0.6">.tex .md .txt .pdf</div>
+                                        <div class="file-hint">.tex .md .txt .pdf</div>
                                     </div>
                                 </template>
                                 <template x-if="resume.loading">
@@ -158,7 +170,7 @@
                     x-show="!optimization.running">
                 <span x-text="optimizeButtonText"></span>
             </button>
-            <button class="btn btn-primary" style="background: var(--error)" @click="cancelOptimization"
+            <button class="btn btn-primary btn-danger" @click="cancelOptimization"
                     x-show="optimization.running">
                 <span class="spinner"></span>
                 Cancel
@@ -169,10 +181,9 @@
         <div class="progress-section" x-show="optimization.running || optimization.iterations.length > 0 || optimization.finalResult || optimization.error || optimization.cancelled">
 
             <!-- Status message while running -->
-            <div x-show="optimization.running && optimization.statusMessage"
-                 style="margin: 12px 0; font-size: 0.9rem; color: var(--text-secondary)">
+            <div x-show="optimization.running && optimization.statusMessage" class="status-message">
                 <span class="spinner"></span>
-                <span x-text="optimization.statusMessage" style="margin-left: 6px"></span>
+                <span x-text="optimization.statusMessage"></span>
             </div>
 
             <!-- Error -->
@@ -198,11 +209,18 @@
                            target="_blank">
                             Download PDF
                         </a>
+                        <button class="btn btn-secondary" @click="showPdfPreview = !showPdfPreview"
+                                x-text="showPdfPreview ? 'Hide Preview' : 'Preview PDF'"></button>
                         <button class="btn btn-secondary" @click="openFolder">Open Folder</button>
                     </div>
 
-                    <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px"
-                         x-show="optimization.finalResult.job">
+                    <!-- PDF Preview iframe -->
+                    <div class="pdf-preview" x-show="showPdfPreview && optimization.finalResult.pdf_filename">
+                        <iframe :src="'/api/pdf/' + optimization.finalResult.pdf_filename"
+                                style="width: 100%; height: 600px; border: 1px solid var(--border); border-radius: 6px; background: #fff;"></iframe>
+                    </div>
+
+                    <div class="result-meta" x-show="optimization.finalResult.job">
                         <span x-text="optimization.finalResult.job.title"></span> at
                         <span x-text="optimization.finalResult.job.company"></span>
                     </div>
@@ -219,16 +237,16 @@
                                   x-text="iter.passed ? 'PASS' : 'FAIL'"
                                   style="margin-left: 8px; font-size: 0.85rem"></span>
                         </span>
-                        <span style="font-size: 0.8rem; color: var(--text-secondary)"
+                        <span class="collapse-hint"
                               x-text="expandedIterations[iter.iteration] ? 'collapse' : 'expand'"></span>
                     </div>
 
                     <div class="iteration-body" x-show="expandedIterations[iter.iteration]">
                         <!-- Changes -->
-                        <div x-show="iter.changes && iter.changes.length" style="margin-bottom: 8px">
-                            <div style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 4px">Changes:</div>
+                        <div x-show="iter.changes && iter.changes.length" class="changes-list">
+                            <div class="changes-label">Changes:</div>
                             <template x-for="change in iter.changes">
-                                <div style="font-size: 0.8rem; margin-left: 8px">- <span x-text="change"></span></div>
+                                <div class="change-item">- <span x-text="change"></span></div>
                             </template>
                         </div>
 
@@ -260,66 +278,162 @@
         </div>
     </div>
 
-    <!-- Sidebar -->
-    <div class="sidebar">
-        <div>
-            <h3>Settings</h3>
-            <div class="setting-row">
-                <input type="checkbox" id="opt-seq" x-model="settings.sequential">
-                <label for="opt-seq">Sequential filters</label>
-            </div>
-            <div class="setting-row">
-                <input type="checkbox" id="opt-debug" x-model="settings.debug">
-                <label for="opt-debug">Debug mode</label>
-            </div>
-            <div class="setting-row">
-                <input type="checkbox" id="opt-shame" x-model="settings.noShame">
-                <label for="opt-shame">No Shame mode</label>
+    <!-- Drawer overlay -->
+    <div class="drawer-overlay" x-show="drawerOpen" @click="drawerOpen = false"
+         x-transition:enter="fade-enter" x-transition:enter-start="fade-enter-start"
+         x-transition:enter-end="fade-enter-end" x-transition:leave="fade-leave"
+         x-transition:leave-start="fade-leave-start" x-transition:leave-end="fade-leave-end"></div>
+
+    <!-- Settings Drawer -->
+    <div class="drawer" :class="drawerOpen && 'open'">
+        <div class="drawer-header">
+            <h2>Settings</h2>
+            <button class="btn-icon" @click="drawerOpen = false" title="Close">
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4 4l10 10M14 4L4 14"/>
+                </svg>
+            </button>
+        </div>
+        <div class="drawer-body">
+
+            <!-- Run Options -->
+            <div class="drawer-section">
+                <div class="drawer-section-title" @click="drawerSections.options = !drawerSections.options">
+                    <span>Run Options</span>
+                    <span class="chevron" :class="drawerSections.options && 'open'"></span>
+                </div>
+                <div class="drawer-section-body" x-show="drawerSections.options">
+                    <div class="setting-field">
+                        <label for="opt-lang">Language</label>
+                        <select id="opt-lang" x-model="settings.language">
+                            <template x-for="lang in appSettings.languages" :key="lang.code">
+                                <option :value="lang.code" x-text="lang.native_name"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="setting-field">
+                        <label for="opt-iter">Max iterations</label>
+                        <input type="number" id="opt-iter" x-model.number="settings.maxIterations" min="1" max="10" style="width: 80px">
+                    </div>
+                    <div class="setting-row">
+                        <input type="checkbox" id="opt-seq" x-model="settings.sequential">
+                        <label for="opt-seq">Sequential filters</label>
+                    </div>
+                    <div class="setting-row">
+                        <input type="checkbox" id="opt-debug" x-model="settings.debug">
+                        <label for="opt-debug">Debug mode</label>
+                    </div>
+                    <div class="setting-row">
+                        <input type="checkbox" id="opt-shame" x-model="settings.noShame">
+                        <label for="opt-shame">No Shame mode</label>
+                    </div>
+                </div>
             </div>
 
-            <div class="setting-row" style="margin-top: 8px">
-                <label for="opt-lang" style="white-space: nowrap">Language</label>
-                <select id="opt-lang" x-model="settings.language">
-                    <template x-for="lang in appSettings.languages" :key="lang.code">
-                        <option :value="lang.code" x-text="lang.native_name"></option>
+            <!-- Models -->
+            <div class="drawer-section">
+                <div class="drawer-section-title" @click="drawerSections.models = !drawerSections.models">
+                    <span>Models</span>
+                    <span class="chevron" :class="drawerSections.models && 'open'"></span>
+                </div>
+                <div class="drawer-section-body" x-show="drawerSections.models">
+                    <div class="setting-field">
+                        <label for="opt-pro-model">Pro model</label>
+                        <input type="text" id="opt-pro-model" x-model="settings.proModel"
+                               :placeholder="appSettings.proModel || 'default'">
+                    </div>
+                    <div class="setting-field">
+                        <label for="opt-flash-model">Flash model</label>
+                        <input type="text" id="opt-flash-model" x-model="settings.flashModel"
+                               :placeholder="appSettings.flashModel || 'default'">
+                    </div>
+                    <div class="setting-field">
+                        <label for="opt-embed-model">Embedding model</label>
+                        <input type="text" id="opt-embed-model" x-model="settings.embeddingModel"
+                               :placeholder="appSettings.embeddingModel || 'default'">
+                    </div>
+                    <div class="setting-field">
+                        <label for="opt-reasoning">Reasoning effort</label>
+                        <select id="opt-reasoning" x-model="settings.reasoningEffort">
+                            <option value="">Default</option>
+                            <option value="none">None</option>
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- API Keys -->
+            <div class="drawer-section">
+                <div class="drawer-section-title" @click="drawerSections.apiKeys = !drawerSections.apiKeys">
+                    <span>API Keys</span>
+                    <span class="chevron" :class="drawerSections.apiKeys && 'open'"></span>
+                </div>
+                <div class="drawer-section-body" x-show="drawerSections.apiKeys">
+                    <div class="drawer-hint">Override keys for this run. Keys from .env are used by default.</div>
+                    <template x-for="[key, label] in apiKeyEntries" :key="key">
+                        <div class="setting-field">
+                            <label x-text="label"></label>
+                            <div class="key-input-row">
+                                <input type="password" x-model="settings.apiKeys[key]"
+                                       :placeholder="appSettings.apiKeysSet[key] ? '(set in .env)' : '(not set)'">
+                                <span class="key-status"
+                                      :class="(settings.apiKeys[key] || appSettings.apiKeysSet[key]) ? 'key-set' : 'key-unset'"
+                                      x-text="(settings.apiKeys[key] || appSettings.apiKeysSet[key]) ? 'SET' : '-'"></span>
+                            </div>
+                        </div>
                     </template>
-                </select>
-            </div>
-
-            <div class="setting-row">
-                <label for="opt-iter" style="white-space: nowrap">Max iterations</label>
-                <input type="number" id="opt-iter" x-model.number="settings.maxIterations" min="1" max="10" style="width: 60px">
-            </div>
-        </div>
-
-        <hr class="sidebar-divider">
-
-        <div>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
-                <h3>History <span style="font-weight: normal" x-text="'(' + history.length + ')'"></span></h3>
-                <div style="display: flex; gap: 4px">
-                    <button class="btn btn-ghost btn-sm" @click="openFolder">Open</button>
-                    <button class="btn btn-ghost btn-sm" @click="loadHistory">Refresh</button>
                 </div>
             </div>
-            <div class="history-list">
-                <template x-for="pdf in history.slice(0, 15)" :key="pdf.filename">
-                    <a class="history-item" :href="'/api/pdf/' + pdf.filename" target="_blank">
-                        <div x-text="pdf.company + ' - ' + pdf.job_title"></div>
-                        <div class="meta" x-text="formatTimestamp(pdf.timestamp)"></div>
-                    </a>
-                </template>
-                <div x-show="history.length === 0" style="font-size: 0.8rem; color: var(--text-secondary)">
-                    No PDFs yet
+
+            <!-- Filter Thresholds -->
+            <div class="drawer-section">
+                <div class="drawer-section-title" @click="drawerSections.thresholds = !drawerSections.thresholds">
+                    <span>Filter Thresholds</span>
+                    <span class="chevron" :class="drawerSections.thresholds && 'open'"></span>
+                </div>
+                <div class="drawer-section-body" x-show="drawerSections.thresholds">
+                    <div class="drawer-hint">Lower = more lenient. Values 0-1.</div>
+                    <template x-for="[key, label] in thresholdEntries" :key="key">
+                        <div class="setting-field">
+                            <label x-text="label"></label>
+                            <div class="threshold-row">
+                                <input type="range" min="0" max="1" step="0.05"
+                                       x-model.number="settings.thresholds[key]">
+                                <span class="threshold-value" x-text="settings.thresholds[key].toFixed(2)"></span>
+                            </div>
+                        </div>
+                    </template>
                 </div>
             </div>
-        </div>
 
-        <hr class="sidebar-divider">
+            <!-- History -->
+            <div class="drawer-section">
+                <div class="drawer-section-title" @click="drawerSections.history = !drawerSections.history">
+                    <span>History <span style="font-weight: normal; text-transform: none" x-text="'(' + history.length + ')'"></span></span>
+                    <span class="chevron" :class="drawerSections.history && 'open'"></span>
+                </div>
+                <div class="drawer-section-body" x-show="drawerSections.history">
+                    <div class="action-row" style="margin-bottom: 8px">
+                        <button class="btn btn-ghost btn-sm" @click="openFolder">Open folder</button>
+                        <button class="btn btn-ghost btn-sm" @click="loadHistory">Refresh</button>
+                    </div>
+                    <div class="history-list">
+                        <template x-for="pdf in history.slice(0, 15)" :key="pdf.filename">
+                            <a class="history-item" :href="'/api/pdf/' + pdf.filename" target="_blank">
+                                <div x-text="pdf.company + ' - ' + pdf.job_title"></div>
+                                <div class="meta" x-text="formatTimestamp(pdf.timestamp)"></div>
+                            </a>
+                        </template>
+                        <div x-show="history.length === 0" class="empty-hint">
+                            No PDFs yet
+                        </div>
+                    </div>
+                </div>
+            </div>
 
-        <div class="model-info">
-            Pro: <span x-text="appSettings.proModel"></span><br>
-            Flash: <span x-text="appSettings.flashModel"></span>
         </div>
     </div>
 

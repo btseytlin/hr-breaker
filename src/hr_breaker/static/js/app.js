@@ -36,6 +36,13 @@ document.addEventListener('alpine:init', () => {
             language: 'en',
             maxIterations: 5,
             instructions: '',
+            // Per-run overrides
+            proModel: '',
+            flashModel: '',
+            embeddingModel: '',
+            reasoningEffort: '',
+            apiKeys: { gemini: '', openrouter: '', openai: '', anthropic: '', moonshot: '' },
+            thresholds: { hallucination: 0.9, keyword: 0.25, llm: 0.7, vector: 0.4, ai_generated: 0.4, translation: 0.95 },
         },
 
         // App settings from server
@@ -43,6 +50,10 @@ document.addEventListener('alpine:init', () => {
             languages: [],
             proModel: '',
             flashModel: '',
+            embeddingModel: '',
+            reasoningEffort: '',
+            apiKeysSet: { gemini: false, openrouter: false, openai: false, anthropic: false, moonshot: false },
+            filterThresholds: {},
         },
 
         // Optimization state
@@ -62,6 +73,37 @@ document.addEventListener('alpine:init', () => {
 
         // Expanded iteration indices
         expandedIterations: {},
+
+        // Drawer state
+        drawerOpen: false,
+        drawerSections: { options: true, models: false, apiKeys: false, thresholds: false, history: true },
+        showPdfPreview: false,
+
+        // Computed getters
+        get apiKeyEntries() {
+            return [
+                ['gemini', 'Gemini API Key'],
+                ['openrouter', 'OpenRouter API Key'],
+                ['openai', 'OpenAI API Key'],
+                ['anthropic', 'Anthropic API Key'],
+                ['moonshot', 'Moonshot API Key'],
+            ];
+        },
+
+        get thresholdEntries() {
+            return [
+                ['hallucination', 'Hallucination'],
+                ['keyword', 'Keyword Match'],
+                ['llm', 'LLM Check'],
+                ['vector', 'Vector Similarity'],
+                ['ai_generated', 'AI Generated'],
+                ['translation', 'Translation Quality'],
+            ];
+        },
+
+        get activeProModel() {
+            return this.settings.proModel || this.appSettings.proModel || '...';
+        },
 
         async init() {
             this._restoreFromStorage();
@@ -84,7 +126,7 @@ document.addEventListener('alpine:init', () => {
         _saveToStorage() {
             const state = {
                 job: { loaded: this.job.loaded, text: this.job.text, preview: this.job.preview },
-                settings: { ...this.settings },
+                settings: { ...this.settings, apiKeys: undefined },
             };
             try { localStorage.setItem(this._storageKey, JSON.stringify(state)); } catch {}
         },
@@ -102,7 +144,10 @@ document.addEventListener('alpine:init', () => {
                     this.job.preview = state.job.preview;
                 }
                 if (state.settings) {
-                    Object.assign(this.settings, state.settings);
+                    const { apiKeys, ...rest } = state.settings;
+                    Object.assign(this.settings, rest);
+                    // Always reset apiKeys to empty (never restore from storage)
+                    this.settings.apiKeys = { gemini: '', openrouter: '', openai: '', anthropic: '', moonshot: '' };
                     this._restoredFromStorage = true;
                 }
             } catch {}
@@ -115,10 +160,16 @@ document.addEventListener('alpine:init', () => {
                 this.appSettings.languages = data.languages;
                 this.appSettings.proModel = data.pro_model;
                 this.appSettings.flashModel = data.flash_model;
-                // Only apply server defaults if not restored from localStorage
+                this.appSettings.embeddingModel = data.embedding_model || '';
+                this.appSettings.reasoningEffort = data.reasoning_effort || '';
+                this.appSettings.apiKeysSet = data.api_keys_set || {};
+                this.appSettings.filterThresholds = data.filter_thresholds || {};
                 if (!this._restoredFromStorage) {
                     this.settings.language = data.default_language;
                     this.settings.maxIterations = data.max_iterations;
+                    if (data.filter_thresholds) {
+                        Object.assign(this.settings.thresholds, data.filter_thresholds);
+                    }
                 }
             } catch (e) {
                 console.error('Failed to load settings:', e);
@@ -298,6 +349,7 @@ document.addEventListener('alpine:init', () => {
             this.optimization.statusMessage = '';
             this.optimization.id = null;
             this.expandedIterations = {};
+            this.showPdfPreview = false;
         },
 
         // --- Optimization ---
@@ -353,6 +405,7 @@ document.addEventListener('alpine:init', () => {
             this.optimization.cancelled = false;
             this.optimization.statusMessage = 'Starting...';
             this.expandedIterations = {};
+            this.showPdfPreview = false;
 
             const abortController = new AbortController();
             this.optimization.abortController = abortController;
@@ -366,6 +419,12 @@ document.addEventListener('alpine:init', () => {
                 language: this.settings.language,
                 max_iterations: this.settings.maxIterations,
                 instructions: this.settings.instructions || null,
+                pro_model: this.settings.proModel || null,
+                flash_model: this.settings.flashModel || null,
+                embedding_model: this.settings.embeddingModel || null,
+                reasoning_effort: this.settings.reasoningEffort || null,
+                api_keys: this._nonEmptyApiKeys() || null,
+                filter_thresholds: this.settings.thresholds,
             };
 
             try {
@@ -486,6 +545,17 @@ document.addEventListener('alpine:init', () => {
 
         toggleIteration(idx) {
             this.expandedIterations[idx] = !this.expandedIterations[idx];
+        },
+
+        // --- Helpers ---
+
+        _nonEmptyApiKeys() {
+            const keys = {};
+            let hasAny = false;
+            for (const [k, v] of Object.entries(this.settings.apiKeys)) {
+                if (v) { keys[k] = v; hasAny = true; }
+            }
+            return hasAny ? keys : null;
         },
 
         // --- History ---
