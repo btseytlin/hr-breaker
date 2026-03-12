@@ -18,6 +18,7 @@ load_dotenv()
 litellm.suppress_debug_info = True
 litellm_patch.apply()
 
+
 def setup_logging() -> logging.Logger:
     general_level = os.getenv("LOG_LEVEL_GENERAL", "WARNING").upper()
     project_level = os.getenv("LOG_LEVEL", "WARNING").upper()
@@ -39,10 +40,14 @@ logger = setup_logging()
 class Settings(BaseSettings):
     """Application settings. Reads from env vars (uppercased field names)."""
 
-    # API key (accepts GOOGLE_API_KEY as fallback for backward compat)
+    # API keys (accepts GOOGLE_API_KEY as fallback for backward compat with Gemini)
     gemini_api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    )
+    moonshot_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MOONSHOT_API_KEY"),
     )
 
     pro_model: str = "gemini/gemini-3-pro-preview"
@@ -100,6 +105,8 @@ class Settings(BaseSettings):
     def model_post_init(self, __context: Any) -> None:
         if self.gemini_api_key and "GEMINI_API_KEY" not in os.environ:
             os.environ["GEMINI_API_KEY"] = self.gemini_api_key
+        if self.moonshot_api_key and "MOONSHOT_API_KEY" not in os.environ:
+            os.environ["MOONSHOT_API_KEY"] = self.moonshot_api_key
 
 
 @lru_cache

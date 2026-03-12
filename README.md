@@ -36,11 +36,25 @@ uv sync
 
 # Configure
 cp .env.example .env
-# Edit .env and add your GOOGLE_API_KEY
+# Edit .env and add your GOOGLE_API_KEY (for Gemini) or MOONSHOT_API_KEY (for Moonshot AI)
 
 # Run web UI
 uv run streamlit run src/hr_breaker/main.py
 ```
+
+### Using Moonshot AI (Kimi)
+
+To use Moonshot AI instead of Gemini:
+
+1. Get a Moonshot AI API key from https://platform.moonshot.ai/
+2. Set `MOONSHOT_API_KEY` in your `.env` file
+3. Configure models to use Moonshot:
+   ```bash
+   PRO_MODEL=moonshot/kimi-k2-5
+   FLASH_MODEL=moonshot/kimi-k2-5
+   ```
+
+Moonshot AI models work via LiteLLM — see [LiteLLM Moonshot docs](https://docs.litellm.ai/docs/providers/moonshot) for available models.
 
 ## Usage
 
@@ -86,7 +100,7 @@ uv run hr-breaker list
 
 ## Configuration
 
-Copy `.env.example` to `.env` and set `GOOGLE_API_KEY` (required). See `.env.example` for all available options.
+Copy `.env.example` to `.env` and set `GOOGLE_API_KEY` (for Gemini) or `MOONSHOT_API_KEY` (for Moonshot AI). See `.env.example` for all available options.
 
 ---
 
