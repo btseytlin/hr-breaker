@@ -122,7 +122,6 @@ async def optimize_for_job(
     no_shame: bool = False,
     user_instructions: str | None = None,
     language: Language | None = None,
-    on_translation_status: Callable[[str], None] | None = None,
 ) -> tuple[OptimizedResume, ValidationResult, JobPosting]:
     """
     Core optimization loop.
@@ -136,8 +135,7 @@ async def optimize_for_job(
         parallel: Run filters in parallel
         no_shame: Lenient mode
         user_instructions: Optional user instructions for the optimizer
-        language: Target language for resume output (None = English, no translation)
-        on_translation_status: Optional callback(status_message) for translation progress
+        language: Target language for resume output (None = English, generated directly in target language)
 
     Returns:
         (optimized_resume, validation_result, job_posting)
@@ -172,7 +170,7 @@ async def optimize_for_job(
             validation=validation,
         )
         with log_time("optimize_resume"):
-            optimized = await optimize_resume(source, job, ctx, no_shame=no_shame, user_instructions=user_instructions)
+            optimized = await optimize_resume(source, job, ctx, no_shame=no_shame, user_instructions=user_instructions, language=language)
         logger.info(f"Optimizer changes: {optimized.changes}")
         # Store last attempt for feedback (html or data depending on mode)
         last_attempt = (
@@ -209,13 +207,6 @@ async def optimize_for_job(
 
         if validation.passed:
             break
-
-    # Post-processing: translate if target language is not English
-    if language is not None and language.code != "en" and optimized is not None and optimized.html:
-        optimized = await translate_and_rerender(
-            optimized, language, job, renderer, settings.translation_max_iterations,
-            on_translation_status,
-        )
 
     return optimized, validation, job
 

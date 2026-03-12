@@ -100,7 +100,7 @@ with st.sidebar:
         options=_lang_options,
         index=_default_lang_idx,
         format_func=lambda code: _lang_labels[code],
-        help="Output language for the final resume. Optimization runs in English, then translates.",
+        help="Output language for the resume. Generated directly in this language.",
     )
     selected_language = get_language(selected_lang_code)
 
@@ -370,10 +370,6 @@ if clicked:
                             opt.pdf_bytes
                         )
 
-            def on_translation_status(msg):
-                status_container.update(label=msg)
-                status_container.write(msg)
-
             # Only pass language if not English (no translation needed)
             target_lang = selected_language if selected_language.code != "en" else None
 
@@ -388,7 +384,6 @@ if clicked:
                     no_shame=no_shame_mode,
                     user_instructions=instructions_value,
                     language=target_lang,
-                    on_translation_status=on_translation_status,
                 )
             )
             status_container.update(label="Optimization complete", state="complete")

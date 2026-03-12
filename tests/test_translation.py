@@ -460,20 +460,73 @@ class TestTranslateAndRerender:
 
 class TestOptimizeForJobTranslation:
     @pytest.mark.asyncio
-    async def test_no_translation_for_english(self, source_resume, job_posting):
-        """optimize_for_job should skip translation when language is English."""
+    async def test_language_passed_to_optimizer_for_russian(self, source_resume, job_posting):
+        """optimize_for_job should pass Russian language to optimize_resume."""
+        russian = get_language("ru")
+        mock_optimized = OptimizedResume(
+            html="<div>Русский</div>",
+            source_checksum=source_resume.checksum,
+            pdf_text="Русский", pdf_bytes=b"pdf",
+        )
+
+        with patch("hr_breaker.orchestration.optimize_resume", new_callable=AsyncMock) as mock_opt, \
+             patch("hr_breaker.orchestration._render_and_extract") as mock_render, \
+             patch("hr_breaker.orchestration.run_filters", new_callable=AsyncMock) as mock_filters:
+
+            from hr_breaker.models import ValidationResult, FilterResult
+            mock_opt.return_value = mock_optimized
+            mock_render.return_value = mock_optimized
+            mock_filters.return_value = ValidationResult(results=[
+                FilterResult(filter_name="test", passed=True, score=1.0),
+            ])
+
+            from hr_breaker.orchestration import optimize_for_job
+            await optimize_for_job(
+                source_resume, job=job_posting, language=russian, max_iterations=1,
+            )
+
+            assert mock_opt.call_args.kwargs.get("language") == russian
+
+    @pytest.mark.asyncio
+    async def test_language_none_passed_to_optimizer(self, source_resume, job_posting):
+        """optimize_for_job with language=None passes None to optimizer."""
+        mock_optimized = OptimizedResume(
+            html="<div>English</div>",
+            source_checksum=source_resume.checksum,
+            pdf_text="English", pdf_bytes=b"pdf",
+        )
+
+        with patch("hr_breaker.orchestration.optimize_resume", new_callable=AsyncMock) as mock_opt, \
+             patch("hr_breaker.orchestration._render_and_extract") as mock_render, \
+             patch("hr_breaker.orchestration.run_filters", new_callable=AsyncMock) as mock_filters:
+
+            from hr_breaker.models import ValidationResult, FilterResult
+            mock_opt.return_value = mock_optimized
+            mock_render.return_value = mock_optimized
+            mock_filters.return_value = ValidationResult(results=[
+                FilterResult(filter_name="test", passed=True, score=1.0),
+            ])
+
+            from hr_breaker.orchestration import optimize_for_job
+            await optimize_for_job(
+                source_resume, job=job_posting, language=None, max_iterations=1,
+            )
+
+            assert mock_opt.call_args.kwargs.get("language") is None
+
+    @pytest.mark.asyncio
+    async def test_english_language_passed_as_is(self, source_resume, job_posting):
+        """optimize_for_job with language=English passes it to optimizer (optimizer ignores it)."""
         english = get_language("en")
         mock_optimized = OptimizedResume(
             html="<div>English</div>",
             source_checksum=source_resume.checksum,
-            pdf_text="English",
-            pdf_bytes=b"pdf",
+            pdf_text="English", pdf_bytes=b"pdf",
         )
 
         with patch("hr_breaker.orchestration.optimize_resume", new_callable=AsyncMock) as mock_opt, \
              patch("hr_breaker.orchestration._render_and_extract") as mock_render, \
-             patch("hr_breaker.orchestration.run_filters", new_callable=AsyncMock) as mock_filters, \
-             patch("hr_breaker.orchestration.translate_and_rerender", new_callable=AsyncMock) as mock_translate:
+             patch("hr_breaker.orchestration.run_filters", new_callable=AsyncMock) as mock_filters:
 
             from hr_breaker.models import ValidationResult, FilterResult
             mock_opt.return_value = mock_optimized
@@ -483,78 +536,11 @@ class TestOptimizeForJobTranslation:
             ])
 
             from hr_breaker.orchestration import optimize_for_job
-
-            result = await optimize_for_job(
+            await optimize_for_job(
                 source_resume, job=job_posting, language=english, max_iterations=1,
             )
 
-            mock_translate.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_no_translation_when_language_is_none(self, source_resume, job_posting):
-        """optimize_for_job should skip translation when language is None."""
-        mock_optimized = OptimizedResume(
-            html="<div>English</div>",
-            source_checksum=source_resume.checksum,
-            pdf_text="English",
-            pdf_bytes=b"pdf",
-        )
-
-        with patch("hr_breaker.orchestration.optimize_resume", new_callable=AsyncMock) as mock_opt, \
-             patch("hr_breaker.orchestration._render_and_extract") as mock_render, \
-             patch("hr_breaker.orchestration.run_filters", new_callable=AsyncMock) as mock_filters, \
-             patch("hr_breaker.orchestration.translate_and_rerender", new_callable=AsyncMock) as mock_translate:
-
-            from hr_breaker.models import ValidationResult, FilterResult
-            mock_opt.return_value = mock_optimized
-            mock_render.return_value = mock_optimized
-            mock_filters.return_value = ValidationResult(results=[
-                FilterResult(filter_name="test", passed=True, score=1.0),
-            ])
-
-            from hr_breaker.orchestration import optimize_for_job
-
-            result = await optimize_for_job(
-                source_resume, job=job_posting, language=None, max_iterations=1,
-            )
-
-            mock_translate.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_translation_called_for_russian(self, source_resume, job_posting):
-        """optimize_for_job should call translation for non-English language."""
-        russian = get_language("ru")
-        mock_optimized = OptimizedResume(
-            html="<div>English</div>",
-            source_checksum=source_resume.checksum,
-            pdf_text="English",
-            pdf_bytes=b"pdf",
-        )
-        mock_translated = mock_optimized.model_copy(
-            update={"html": "<div>Русский</div>"}
-        )
-
-        with patch("hr_breaker.orchestration.optimize_resume", new_callable=AsyncMock) as mock_opt, \
-             patch("hr_breaker.orchestration._render_and_extract") as mock_render, \
-             patch("hr_breaker.orchestration.run_filters", new_callable=AsyncMock) as mock_filters, \
-             patch("hr_breaker.orchestration.translate_and_rerender", new_callable=AsyncMock) as mock_translate:
-
-            from hr_breaker.models import ValidationResult, FilterResult
-            mock_opt.return_value = mock_optimized
-            mock_render.return_value = mock_optimized
-            mock_filters.return_value = ValidationResult(results=[
-                FilterResult(filter_name="test", passed=True, score=1.0),
-            ])
-            mock_translate.return_value = mock_translated
-
-            from hr_breaker.orchestration import optimize_for_job
-
-            optimized, validation, job = await optimize_for_job(
-                source_resume, job=job_posting, language=russian, max_iterations=1,
-            )
-
-            mock_translate.assert_called_once()
-            assert optimized.html == "<div>Русский</div>"
+            assert mock_opt.call_args.kwargs.get("language") == english
 
 
 # ── PDF filename language postfix tests ───────────────────────────────────────

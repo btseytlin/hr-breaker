@@ -73,7 +73,7 @@ OUTPUT_DIR = Path("output")
         [lang.code for lang in SUPPORTED_LANGUAGES], case_sensitive=False
     ),
     default=None,
-    help="Output language (default: en). Optimization runs in English, then translates.",
+    help="Output language (default: en). Resume is generated directly in this language.",
 )
 @click.option(
     "--instructions",
@@ -138,9 +138,6 @@ def optimize(
     lang_code = lang or settings.default_language
     target_language = get_language(lang_code) if lang_code != "en" else None
 
-    def on_translation_status(msg: str):
-        click.echo(f"  {msg}")
-
     # Run all async work in single event loop
     async def run_optimization():
         nonlocal debug_dir
@@ -173,7 +170,6 @@ def optimize(
             no_shame=no_shame,
             user_instructions=instructions,
             language=target_language,
-            on_translation_status=on_translation_status,
         )
         return first_name, last_name, source, optimized, validation, job
 
