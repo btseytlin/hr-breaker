@@ -14,7 +14,8 @@ from hr_breaker.models import (
     GeneratedPDF,
     ResumeSource,
     SUPPORTED_LANGUAGES,
-    get_language, 
+    get_language_safe,
+    resolve_target_language,
 )
 from hr_breaker.orchestration import optimize_for_job
 from hr_breaker.services import (
@@ -73,10 +74,11 @@ OUTPUT_DIR = Path("output")
     "--lang",
     "-l",
     type=click.Choice(
-        [lang.code for lang in SUPPORTED_LANGUAGES], case_sensitive=False
+        ["from_job", "from_resume"] + [lang.code for lang in SUPPORTED_LANGUAGES],
+        case_sensitive=False,
     ),
     default=None,
-    help="Output language (default: en). Resume is generated directly in this language.",
+    help="Language mode: from_job (detect from job), from_resume (detect from resume), or ISO code (default: from_job).",
 )
 @click.option(
     "--instructions",
@@ -137,33 +139,35 @@ def optimize(
             else:
                 click.echo(f"    Debug: no PDF (render failed)")
 
-    # Resolve target language
     settings = get_settings()
-    lang_code = lang or settings.default_language
-    target_language = get_language(lang_code) if lang_code != "en" else None
+    lang_mode = lang or settings.default_language
 
     # Run all async work in single event loop
     async def run_optimization():
         nonlocal debug_dir
-        first_name, last_name = await extract_name(resume_content)
-        click.echo(f"Resume: {first_name or 'Unknown'} {last_name or ''}")
+        first_name, last_name, resume_lang_code = await extract_name(resume_content)
+        click.echo(f"Resume: {first_name or 'Unknown'} {last_name or ''} (lang: {resume_lang_code})")
 
         # Parse job first to get company/role for debug dir
         job = await parse_job_posting(job_text)
-        click.echo(f"Job: {job.title} at {job.company}")
+        click.echo(f"Job: {job.title} at {job.company} (lang: {job.language_code})")
+
+        # Resolve language mode
+        target_language = resolve_target_language(lang_mode, job.language_code, resume_lang_code)
+        source_lang = get_language_safe(resume_lang_code)
 
         if debug:
             debug_dir = pdf_storage.generate_debug_dir(job.company, job.title, run_id=run_id)
 
         mode = "sequential" if seq else "parallel"
         shame_mode = " [no-shame]" if no_shame else ""
-        lang_label = f" [lang: {lang_code}]" if target_language else ""
-        click.echo(f"Optimizing (mode: {mode}{shame_mode}{lang_label})...")
+        click.echo(f"Optimizing (mode: {mode}{shame_mode}, target: {target_language.english_name})...")
 
         source = ResumeSource(
             content=resume_content,
             first_name=first_name,
             last_name=last_name,
+            language_code=resume_lang_code,
         )
         optimized, validation, _ = await optimize_for_job(
             source,
@@ -174,12 +178,14 @@ def optimize(
             no_shame=no_shame,
             user_instructions=instructions,
             language=target_language,
+            source_language=source_lang,
         )
-        return first_name, last_name, source, optimized, validation, job
+        return first_name, last_name, source, optimized, validation, job, target_language
 
-    first_name, last_name, source, optimized, validation, job = asyncio.run(
+    first_name, last_name, source, optimized, validation, job, target_language = asyncio.run(
         run_optimization()
     )
+    lang_code = target_language.code
 
     if not validation.passed:
         click.echo("Warning: Not all filters passed")

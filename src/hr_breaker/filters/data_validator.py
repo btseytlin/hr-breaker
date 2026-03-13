@@ -90,6 +90,7 @@ class DataValidator(BaseFilter):
         job: JobPosting,
         source: ResumeSource,
         language: Language | None = None,
+        source_language: Language | None = None,
     ) -> FilterResult:
         # Choose validation based on which field is present
         if optimized.html is not None:

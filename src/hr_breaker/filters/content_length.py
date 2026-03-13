@@ -44,6 +44,7 @@ class ContentLengthChecker(BaseFilter):
         job: JobPosting,
         source: ResumeSource,
         language: Language | None = None,
+        source_language: Language | None = None,
     ) -> FilterResult:
         if optimized.html is None:
             return FilterResult(

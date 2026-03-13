@@ -68,7 +68,7 @@ class TestRunFiltersLanguage:
             threshold = 0.5
             def __init__(self, no_shame=False):
                 pass
-            async def evaluate(self, optimized, job, source, language=None):
+            async def evaluate(self, optimized, job, source, language=None, source_language=None):
                 captured_language.append(language)
                 return FilterResult(
                     filter_name="MockFilter", passed=True, score=1.0,

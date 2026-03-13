@@ -21,6 +21,7 @@ class BaseFilter(ABC):
         job: JobPosting,
         source: ResumeSource,
         language: Language | None = None,
+        source_language: Language | None = None,
     ) -> FilterResult:
         """Evaluate the optimized resume against the job posting."""
         pass

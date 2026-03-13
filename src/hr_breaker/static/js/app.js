@@ -33,7 +33,7 @@ document.addEventListener('alpine:init', () => {
             sequential: false,
             debug: true,
             noShame: false,
-            language: 'en',
+            language: 'from_job',
             maxIterations: 5,
             instructions: '',
             // Per-run overrides
@@ -47,7 +47,7 @@ document.addEventListener('alpine:init', () => {
 
         // App settings from server
         appSettings: {
-            languages: [],
+            languageModes: [],
             proModel: '',
             flashModel: '',
             embeddingModel: '',
@@ -116,10 +116,9 @@ document.addEventListener('alpine:init', () => {
                 this.loadHistory(),
                 this.checkActiveOptimization(),
             ]);
-            await Promise.all([
-                this._autoSelectCached(this.cachedResumes, this._savedChecksums.resume, r => this.selectCachedResume(r)),
-                this._autoSelectCached(this.cachedJobs, this._savedChecksums.job, j => this.selectCachedJob(j)),
-            ]);
+            // Auto-select newest (by mtime) without touching — mtime is the source of truth
+            if (this.cachedResumes.length > 0) this._loadCachedResume(this.cachedResumes[0]);
+            if (this.cachedJobs.length > 0) await this._loadCachedJob(this.cachedJobs[0]);
 
             // Watch for changes and persist
             this.$watch('settings', () => this._saveToStorage());
@@ -132,18 +131,11 @@ document.addEventListener('alpine:init', () => {
             const state = {
                 settings: { ...this.settings, apiKeys: undefined },
                 drawerSections: this.drawerSections,
-                selectedChecksums: {
-                    resume: this.resume.checksum,
-                    job: this._selectedJobChecksum,
-                },
             };
             try { localStorage.setItem(this._storageKey, JSON.stringify(state)); } catch {}
         },
 
         _restoredFromStorage: false,
-        // undefined = first visit (auto-select latest), null = explicitly cleared
-        _savedChecksums: { resume: undefined, job: undefined },
-        _selectedJobChecksum: null,
 
         _restoreFromStorage() {
             try {
@@ -160,31 +152,40 @@ document.addEventListener('alpine:init', () => {
                 if (state.drawerSections) {
                     Object.assign(this.drawerSections, state.drawerSections);
                 }
-                if (state.selectedChecksums) {
-                    this._savedChecksums = state.selectedChecksums;
-                }
             } catch {}
         },
 
-        // Shared: restore saved selection or pick latest from cache
-        async _autoSelectCached(items, savedChecksum, selectFn) {
-            // null = user explicitly cleared, don't auto-select
-            if (savedChecksum === null) return;
-            if (items.length === 0) return;
-            // Try to restore previously selected item
-            if (savedChecksum) {
-                const saved = items.find(i => i.checksum === savedChecksum);
-                if (saved) { await selectFn(saved); return; }
+        // Load resume metadata into UI state (no server touch — preserves mtime)
+        _loadCachedResume(r) {
+            this.resume.loaded = true;
+            this.resume.checksum = r.checksum;
+            this.resume.firstName = r.first_name;
+            this.resume.lastName = r.last_name;
+            this.resume.contentPreview = '';
+            this.resume.error = null;
+            if (r.instructions) {
+                this.settings.instructions = r.instructions;
             }
-            // First visit (undefined) — pick latest
-            await selectFn(items[0]);
+        },
+
+        // Load job content into UI state (no server touch — preserves mtime)
+        async _loadCachedJob(j) {
+            try {
+                const resp = await fetch('/api/job/' + j.checksum);
+                const data = await resp.json();
+                this.job.loaded = true;
+                this.job.text = data.text;
+                this.job.preview = data.text.substring(0, 200).replace(/\n/g, ' ');
+            } catch (e) {
+                console.error('Failed to auto-load job:', e);
+            }
         },
 
         async loadSettings() {
             try {
                 const resp = await fetch('/api/settings');
                 const data = await resp.json();
-                this.appSettings.languages = data.languages;
+                this.appSettings.languageModes = data.language_modes;
                 this.appSettings.proModel = data.pro_model;
                 this.appSettings.flashModel = data.flash_model;
                 this.appSettings.embeddingModel = data.embedding_model || '';
@@ -228,16 +229,7 @@ document.addEventListener('alpine:init', () => {
         },
 
         async selectCachedResume(r) {
-            this.resume.loaded = true;
-            this.resume.checksum = r.checksum;
-            this.resume.firstName = r.first_name;
-            this.resume.lastName = r.last_name;
-            this.resume.contentPreview = ''; // loaded on demand
-            this.resume.error = null;
-            if (r.instructions) {
-                this.settings.instructions = r.instructions;
-            }
-            this._saveToStorage();
+            this._loadCachedResume(r);
             await fetch('/api/resume/select/' + r.checksum, { method: 'POST' });
         },
 
@@ -302,7 +294,6 @@ document.addEventListener('alpine:init', () => {
                 this.resume.firstName = data.first_name;
                 this.resume.lastName = data.last_name;
                 this.resume.contentPreview = '';
-                this._saveToStorage();
                 this.loadCachedResumes();
             } catch (e) {
                 this.resume.error = 'Upload failed: ' + e.message;
@@ -337,7 +328,6 @@ document.addEventListener('alpine:init', () => {
                 this.resume.lastName = data.last_name;
                 this.resume.contentPreview = '';
                 this.resume.pasteText = '';
-                this._saveToStorage();
                 this.loadCachedResumes();
             } catch (e) {
                 this.resume.error = 'Failed: ' + e.message;
@@ -355,7 +345,6 @@ document.addEventListener('alpine:init', () => {
             this.resume.showPreview = false;
             this.resume.error = null;
             this.clearResult();
-            this._saveToStorage();
         },
 
         // --- Job actions ---
@@ -447,13 +436,7 @@ document.addEventListener('alpine:init', () => {
             this.job.loading = true;
             this.job.error = null;
             try {
-                const resp = await fetch('/api/job/' + j.checksum);
-                const data = await resp.json();
-                this.job.loaded = true;
-                this.job.text = data.text;
-                this.job.preview = data.text.substring(0, 200).replace(/\n/g, ' ');
-                this._selectedJobChecksum = j.checksum;
-                this._saveToStorage();
+                await this._loadCachedJob(j);
                 await fetch('/api/job/select/' + j.checksum, { method: 'POST' });
             } catch (e) {
                 this.job.error = 'Failed to load job: ' + e.message;

@@ -23,6 +23,7 @@ class AIGeneratedChecker(BaseFilter):
         job: JobPosting,
         source: ResumeSource,
         language: Language | None = None,
+        source_language: Language | None = None,
     ) -> FilterResult:
         result = await detect_ai_generated(optimized, language=language)
         # Halve threshold in no-shame mode

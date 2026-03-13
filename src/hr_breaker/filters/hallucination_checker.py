@@ -23,6 +23,7 @@ class HallucinationChecker(BaseFilter):
         job: JobPosting,
         source: ResumeSource,
         language: Language | None = None,
+        source_language: Language | None = None,
     ) -> FilterResult:
         result = await detect_hallucinations(optimized, source, no_shame=self.no_shame, language=language)
         if not self.no_shame:

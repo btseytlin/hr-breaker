@@ -25,6 +25,7 @@ class VectorSimilarityMatcher(BaseFilter):
         job: JobPosting,
         source: ResumeSource,
         language: Language | None = None,
+        source_language: Language | None = None,
     ) -> FilterResult:
         settings = get_settings()
 

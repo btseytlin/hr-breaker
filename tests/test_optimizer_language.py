@@ -4,7 +4,43 @@ import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
 from hr_breaker.models import JobPosting, ResumeSource, IterationContext, OptimizedResume, ValidationResult, FilterResult
-from hr_breaker.models.language import get_language
+from hr_breaker.models.language import get_language, get_language_safe, resolve_target_language, LANGUAGE_MODES
+
+
+class TestLanguageHelpers:
+
+    def test_get_language_safe_known(self):
+        assert get_language_safe("en").code == "en"
+        assert get_language_safe("ru").code == "ru"
+
+    def test_get_language_safe_unknown(self):
+        assert get_language_safe("xx").code == "en"
+        assert get_language_safe(None).code == "en"
+        assert get_language_safe("").code == "en"
+
+    def test_resolve_from_job(self):
+        lang = resolve_target_language("from_job", "ru", "en")
+        assert lang.code == "ru"
+
+    def test_resolve_from_resume(self):
+        lang = resolve_target_language("from_resume", "ru", "en")
+        assert lang.code == "en"
+
+    def test_resolve_fixed_code(self):
+        lang = resolve_target_language("ru", "en", "en")
+        assert lang.code == "ru"
+
+    def test_resolve_from_job_unknown(self):
+        lang = resolve_target_language("from_job", "xx", "en")
+        assert lang.code == "en"
+
+    def test_language_modes_structure(self):
+        assert len(LANGUAGE_MODES) >= 4
+        values = [m["value"] for m in LANGUAGE_MODES]
+        assert "from_job" in values
+        assert "from_resume" in values
+        assert "en" in values
+        assert "ru" in values
 
 
 class TestOptimizerLanguagePrompt:
@@ -106,3 +142,30 @@ class TestOrchestrationPassesLanguage:
 
             assert mock_opt.call_args.kwargs.get("language") == russian
 
+    @pytest.mark.asyncio
+    async def test_source_language_passed_to_filters(self):
+        russian = get_language("ru")
+        english = get_language("en")
+        source = ResumeSource(content="John Doe\nPython dev")
+        job = JobPosting(
+            title="Backend Engineer", company="Acme",
+            requirements=["Python"], keywords=["python"],
+        )
+        mock_optimized = MagicMock()
+        mock_optimized.html = "<div>Тест</div>"
+        mock_optimized.data = None
+
+        with patch("hr_breaker.orchestration.optimize_resume", new_callable=AsyncMock) as mock_opt, \
+             patch("hr_breaker.orchestration._render_and_extract") as mock_render, \
+             patch("hr_breaker.orchestration.run_filters", new_callable=AsyncMock) as mock_filters:
+
+            mock_opt.return_value = mock_optimized
+            mock_render.return_value = mock_optimized
+            mock_filters.return_value = ValidationResult(results=[
+                FilterResult(filter_name="test", passed=True, score=1.0),
+            ])
+
+            from hr_breaker.orchestration import optimize_for_job
+            await optimize_for_job(source, job=job, language=russian, source_language=english, max_iterations=1)
+
+            assert mock_filters.call_args.kwargs.get("source_language") == english

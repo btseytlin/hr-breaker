@@ -23,6 +23,7 @@ class LLMChecker(BaseFilter):
         job: JobPosting,
         source: ResumeSource,
         language: Language | None = None,
+        source_language: Language | None = None,
     ) -> FilterResult:
         result, _, page_count, render_warnings = await combined_review(optimized, job, language=language)
 

@@ -10,7 +10,7 @@ from .resume_data import (
 from .job_posting import JobPosting
 from .feedback import FilterResult, ValidationResult, GeneratedPDF
 from .iteration import IterationContext
-from .language import Language, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE, get_language
+from .language import Language, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE, LANGUAGE_MODES, get_language, get_language_safe, resolve_target_language
 
 __all__ = [
     "ResumeSource",
@@ -29,5 +29,8 @@ __all__ = [
     "Language",
     "SUPPORTED_LANGUAGES",
     "DEFAULT_LANGUAGE",
+    "LANGUAGE_MODES",
     "get_language",
+    "get_language_safe",
+    "resolve_target_language",
 ]

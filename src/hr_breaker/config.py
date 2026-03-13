@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     agent_name_extractor_chars: int = 2000
 
     # Language settings
-    default_language: str = "en"
+    default_language: str = "from_job"
 
     # Retry settings
     retry_max_attempts: int = 5

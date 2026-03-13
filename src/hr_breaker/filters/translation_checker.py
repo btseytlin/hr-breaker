@@ -23,9 +23,12 @@ class TranslationQualityChecker(BaseFilter):
         job: JobPosting,
         source: ResumeSource,
         language: Language | None = None,
+        source_language: Language | None = None,
     ) -> FilterResult:
-        # Skip when language is English or not set
-        if language is None or language.code == "en":
+        # Skip when target language matches source language (no translation needed)
+        effective_source = source_language.code if source_language else "en"
+        effective_target = language.code if language else "en"
+        if effective_source == effective_target:
             return FilterResult(
                 filter_name=self.name,
                 passed=True,

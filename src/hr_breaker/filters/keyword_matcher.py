@@ -105,6 +105,7 @@ class KeywordMatcher(BaseFilter):
         job: JobPosting,
         source: ResumeSource,
         language: Language | None = None,
+        source_language: Language | None = None,
     ) -> FilterResult:
         if optimized.pdf_text is None:
             return FilterResult(

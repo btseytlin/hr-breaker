@@ -8,7 +8,6 @@ import platform
 import subprocess
 import uuid
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
@@ -21,8 +20,9 @@ from hr_breaker.config import get_settings, logger, settings_override
 from hr_breaker.models import (
     GeneratedPDF,
     ResumeSource,
-    SUPPORTED_LANGUAGES,
-    get_language,
+    LANGUAGE_MODES,
+    get_language_safe,
+    resolve_target_language,
 )
 from hr_breaker.orchestration import optimize_for_job
 from hr_breaker.services import (
@@ -53,25 +53,14 @@ class _SSELogHandler(logging.Handler):
             self.handleError(record)
 
 # NOTE: Module-level mutable state requires single-worker uvicorn (the default).
-# Do not use multiple workers — resume_store and _active_optimization are not shared.
-
-# In-memory resume store (populated from cache on startup)
-resume_store: dict[str, ResumeSource] = {}
+# Do not use multiple workers — _active_optimization is not shared across processes.
 
 # Active optimization singleton — only one at a time
 # When running: {"id": str, "task": asyncio.Task, "events": list[str], "subscribers": list[asyncio.Queue]}
 _active_optimization: dict | None = None
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    cache = ResumeCache()
-    for resume in cache.list_all():
-        resume_store[resume.checksum] = resume
-    yield
-
-
-app = FastAPI(title="HR-Breaker", lifespan=lifespan)
+app = FastAPI(title="HR-Breaker")
 
 
 # --- API Models ---
@@ -94,7 +83,7 @@ class OptimizeRequest(BaseModel):
     sequential: bool = False
     debug: bool = True
     no_shame: bool = False
-    language: str = "en"
+    language: str = "from_job"
     max_iterations: int | None = None
     instructions: str | None = None
     # Per-run overrides (None = use server defaults)
@@ -118,10 +107,7 @@ async def index():
 async def get_app_settings():
     settings = get_settings()
     return {
-        "languages": [
-            {"code": lang.code, "english_name": lang.english_name, "native_name": lang.native_name}
-            for lang in SUPPORTED_LANGUAGES
-        ],
+        "language_modes": LANGUAGE_MODES,
         "default_language": settings.default_language,
         "pro_model": settings.pro_model,
         "flash_model": settings.flash_model,
@@ -155,16 +141,14 @@ async def upload_resume(file: UploadFile = File(...)):
         return JSONResponse(status_code=400, content={"error": f"Failed to read file: {e}"})
 
     try:
-        first_name, last_name = await extract_name(content)
+        first_name, last_name, language_code = await extract_name(content)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Failed to extract name: {e}"})
 
-    source = ResumeSource(content=content, first_name=first_name, last_name=last_name, filename=file.filename)
+    source = ResumeSource(content=content, first_name=first_name, last_name=last_name, language_code=language_code, filename=file.filename)
 
     # Cache
-    cache = ResumeCache()
-    cache.put(source)
-    resume_store[source.checksum] = source
+    ResumeCache().put(source)
 
     return {
         "checksum": source.checksum,
@@ -180,15 +164,13 @@ async def paste_resume(req: PasteResumeRequest):
         raise HTTPException(status_code=400, detail="Empty content")
 
     try:
-        first_name, last_name = await extract_name(content)
+        first_name, last_name, language_code = await extract_name(content)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Failed to extract name: {e}"})
 
-    source = ResumeSource(content=content, first_name=first_name, last_name=last_name, filename="pasted")
+    source = ResumeSource(content=content, first_name=first_name, last_name=last_name, language_code=language_code, filename="pasted")
 
-    cache = ResumeCache()
-    cache.put(source)
-    resume_store[source.checksum] = source
+    ResumeCache().put(source)
 
     return {
         "checksum": source.checksum,
@@ -206,17 +188,12 @@ async def select_resume(checksum: str):
 @app.delete("/api/resume/cached/{checksum}")
 async def delete_cached_resume(checksum: str):
     ResumeCache().delete(checksum)
-    resume_store.pop(checksum, None)
     return {"ok": True}
 
 
 @app.get("/api/resume/cached")
 async def cached_resumes():
-    cache = ResumeCache()
-    resumes = cache.list_all()
-    # Refresh store
-    for r in resumes:
-        resume_store[r.checksum] = r
+    resumes = ResumeCache().list_all()
     return [
         {
             "checksum": r.checksum,
@@ -232,7 +209,7 @@ async def cached_resumes():
 
 @app.get("/api/resume/{checksum}")
 async def get_resume(checksum: str):
-    source = resume_store.get(checksum)
+    source = ResumeCache().get(checksum)
     if not source:
         raise HTTPException(status_code=404, detail="Resume not found")
     return {"content": source.content}
@@ -327,7 +304,7 @@ async def optimize_endpoint(req: OptimizeRequest):
     # Clear stale completed optimization
     _cleanup_active()
 
-    source = resume_store.get(req.resume_checksum)
+    source = ResumeCache().get(req.resume_checksum)
     if not source:
         return JSONResponse(status_code=400, content={"error": "Resume not found. Upload or paste first."})
 
@@ -498,15 +475,20 @@ async def _run_optimization_inner(req: OptimizeRequest, source: ResumeSource):
         pdf_storage = PDFStorage()
         run_id = generate_run_id()
 
-        # Resolve language
-        lang_code = req.language
-        target_language = get_language(lang_code) if lang_code != "en" else None
-
         _emit("status", {"message": "Parsing job posting..."})
 
         job = await parse_job_posting(req.job_text)
 
-        _emit("status", {"message": f"Job: {job.title} at {job.company}"})
+        # Resolve language mode to concrete languages
+        target_language = resolve_target_language(req.language, job.language_code, source.language_code)
+        source_lang = get_language_safe(source.language_code)
+        lang_code = target_language.code
+
+        _emit("status", {
+            "message": f"Job: {job.title} at {job.company} "
+            f"(resume: {source_lang.english_name}, job: {get_language_safe(job.language_code).english_name}, "
+            f"target: {target_language.english_name})"
+        })
 
         # Setup debug dir
         debug_dir = None
@@ -562,6 +544,7 @@ async def _run_optimization_inner(req: OptimizeRequest, source: ResumeSource):
             no_shame=req.no_shame,
             user_instructions=req.instructions,
             language=target_language,
+            source_language=source_lang,
         )
 
         # Save PDF

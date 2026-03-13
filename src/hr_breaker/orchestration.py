@@ -55,6 +55,7 @@ async def run_filters(
     parallel: bool = False,
     no_shame: bool = False,
     language: Language | None = None,
+    source_language: Language | None = None,
 ) -> ValidationResult:
     """Run filters, either sequentially (early exit) or in parallel."""
     filters = FilterRegistry.all()
@@ -63,7 +64,7 @@ async def run_filters(
         # Run all filters concurrently
         start = time.perf_counter()
         filter_instances = [filter_cls(no_shame=no_shame) for filter_cls in filters]
-        tasks = [f.evaluate(optimized, job, source, language=language) for f in filter_instances]
+        tasks = [f.evaluate(optimized, job, source, language=language, source_language=source_language) for f in filter_instances]
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
         logger.debug(f"All filters (parallel): {time.perf_counter() - start:.2f}s")
 
@@ -101,7 +102,7 @@ async def run_filters(
 
         f = filter_cls(no_shame=no_shame)
         start = time.perf_counter()
-        result = await f.evaluate(optimized, job, source, language=language)
+        result = await f.evaluate(optimized, job, source, language=language, source_language=source_language)
         logger.debug(f"{filter_cls.name}: {time.perf_counter() - start:.2f}s")
         results.append(result)
 
@@ -122,6 +123,7 @@ async def optimize_for_job(
     no_shame: bool = False,
     user_instructions: str | None = None,
     language: Language | None = None,
+    source_language: Language | None = None,
 ) -> tuple[OptimizedResume, ValidationResult, JobPosting]:
     """
     Core optimization loop.
@@ -199,7 +201,7 @@ async def optimize_for_job(
         else:
             validation = await run_filters(
                 optimized, job, source, parallel=parallel, no_shame=no_shame,
-                language=language,
+                language=language, source_language=source_language,
             )
 
         if on_iteration:

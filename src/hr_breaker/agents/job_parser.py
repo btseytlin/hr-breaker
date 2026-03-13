@@ -14,6 +14,7 @@ Extract:
 - requirements: List of specific requirements (skills, experience, education)
 - keywords: Technical keywords, tools, technologies mentioned
 - description: Brief summary of the role
+- language_code: ISO 639-1 code of the posting's primary language (e.g. "en", "ru", "de", "fr")
 
 Be thorough in extracting keywords - include all technologies, tools, frameworks, methodologies mentioned.
 """

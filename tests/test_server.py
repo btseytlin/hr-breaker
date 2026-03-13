@@ -6,17 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from hr_breaker.server import app, resume_store, _cleanup_active
+from hr_breaker.server import app, _cleanup_active
 import hr_breaker.server as server_module
 
 
 @pytest.fixture(autouse=True)
 def _clean_server_state():
     """Reset server state between tests."""
-    resume_store.clear()
     server_module._active_optimization = None
     yield
-    resume_store.clear()
     server_module._active_optimization = None
 
 
@@ -38,7 +36,7 @@ async def test_settings(client):
     resp = await client.get("/api/settings")
     assert resp.status_code == 200
     data = resp.json()
-    assert "languages" in data
+    assert "language_modes" in data
     assert "pro_model" in data
     assert "flash_model" in data
     assert "max_iterations" in data
@@ -59,7 +57,7 @@ async def test_paste_resume_empty(client):
 
 @pytest.mark.asyncio
 async def test_paste_resume(client):
-    with patch("hr_breaker.server.extract_name", new_callable=AsyncMock, return_value=("John", "Doe")):
+    with patch("hr_breaker.server.extract_name", new_callable=AsyncMock, return_value=("John", "Doe", "en")):
         resp = await client.post("/api/resume/paste", json={"content": "John Doe\nSoftware Engineer"})
     assert resp.status_code == 200
     data = resp.json()

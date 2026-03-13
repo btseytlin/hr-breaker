@@ -229,7 +229,7 @@
                     <div x-show="optimization.logsOpen" id="log-panel" class="log-panel">
                         <template x-for="(log, i) in optimization.logs" :key="i">
                             <div class="log-line">
-                                <span class="log-level" :class="'log-' + log.level.toLowerCase()" x-text="log.level.substring(0, 4)"></span>
+                                <span class="log-level" :class="'log-' + log.level.toLowerCase()" x-text="({DEBUG:'DEBUG',INFO:'INFO ',WARNING:'WARN ',ERROR:'ERROR',CRITICAL:'CRIT '}[log.level] || log.level).substring(0,5)"></span>
                                 <span class="log-msg" x-text="log.message"></span>
                             </div>
                         </template>
@@ -343,8 +343,8 @@
                     <div class="setting-field">
                         <label for="opt-lang">Language</label>
                         <select id="opt-lang" x-model="settings.language">
-                            <template x-for="lang in appSettings.languages" :key="lang.code">
-                                <option :value="lang.code" x-text="lang.native_name"></option>
+                            <template x-for="mode in appSettings.languageModes" :key="mode.value">
+                                <option :value="mode.value" x-text="mode.label"></option>
                             </template>
                         </select>
                     </div>
