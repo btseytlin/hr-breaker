@@ -242,8 +242,8 @@ async def get_resume(checksum: str):
 async def scrape_job(req: ScrapeJobRequest):
     try:
         text = scrape_job_posting(req.url)
-        JobCache().put(text, source=req.url)
-        return {"text": text}
+        checksum = JobCache().put(text, source=req.url)
+        return {"text": text, "checksum": checksum}
     except CloudflareBlockedError:
         return {"error": "cloudflare", "message": "Site has bot protection. Copy & paste instead."}
     except ScrapingError as e:
@@ -255,8 +255,8 @@ async def paste_job(req: PasteJobRequest):
     text = req.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Empty content")
-    JobCache().put(text, source="pasted")
-    return {"ok": True}
+    checksum = JobCache().put(text, source="pasted")
+    return {"ok": True, "checksum": checksum}
 
 
 @app.get("/api/job/cached")
