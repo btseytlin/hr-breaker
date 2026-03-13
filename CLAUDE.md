@@ -11,7 +11,7 @@ Tool for optimizing resumes for job postings and passing automated filters.
 3. LLM extracts content from resume and generates NEW HTML resume that:
    - Maximally fits the job posting
    - Follows guidelines: one-page PDF, no misinformation, etc.
-   - Generated in target language if specified (default: English)
+   - Generated in target language (auto-detected from job/resume, or fixed)
 4. System runs internal filters (LLM-based ATS simulation, keyword matching, hallucination detection, etc.)
 5. If filters reject, repeat from step 3 using feedback
 6. When all checks pass, render HTML→PDF via WeasyPrint and return
@@ -68,10 +68,10 @@ src/hr_breaker/
 ```
 
 ### Agents
-- `job_parser` - Parse job posting → title, company, requirements, keywords
+- `job_parser` - Parse job posting → title, company, requirements, keywords, language_code
 - `optimizer` - Generate optimized HTML resume from source + job
 - `combined_reviewer` - Vision + ATS screening in single LLM call
-- `name_extractor` - Extract name from any resume format
+- `name_extractor` - Extract name + language_code from any resume format (returns 3-tuple)
 - `hallucination_detector` - Detect fabricated content
 - `ai_generated_detector` - Detect AI-generated content indicators
 - `translation_checker` - Evaluate translation quality for non-English resumes
@@ -88,7 +88,7 @@ Filters run by priority (lower first). Default: parallel execution. Use `--seq` 
 | 5 | LLMChecker | Combined vision + ATS simulation |
 | 6 | VectorSimilarityMatcher | Embedding similarity (via litellm) |
 | 7 | AIGeneratedChecker | AI content detection |
-| 8 | TranslationQualityChecker | Translation quality for non-English resumes (auto-pass for English) |
+| 8 | TranslationQualityChecker | Translation quality (skipped when source == target language) |
 
 To add filter: subclass `BaseFilter`, set `name` and `priority`, use `@FilterRegistry.register`
 
@@ -109,7 +109,8 @@ uv run hr-breaker serve --no-open          # don't auto-open browser
 
 # CLI
 uv run hr-breaker optimize resume.txt https://example.com/job
-uv run hr-breaker optimize resume.txt https://example.com/job -l ru # generate directly in Russian
+uv run hr-breaker optimize resume.txt https://example.com/job -l ru        # force Russian output
+uv run hr-breaker optimize resume.txt https://example.com/job -l from_job  # detect from job (default)
 uv run hr-breaker optimize resume.txt job.txt -D              # disable debug mode (on by default)
 uv run hr-breaker optimize resume.txt job.txt --seq           # sequential filters (early exit)
 uv run hr-breaker optimize resume.txt job.txt --no-shame      # massively relax lies/hallucination/AI checks (use with caution!)
@@ -149,6 +150,14 @@ Repro: `uv run python scripts/repro_vision_bug.py` (without patch) vs `uv run py
 - API keys: never persisted to localStorage, only sent per-request. Backend only returns boolean "is set" status, never actual values
 - Settings (models, thresholds, reasoning effort) prefilled from server defaults on load
 - Only settings and drawer state persisted to localStorage (no job text, no API keys)
+
+### Language Mode System
+- Language is a **mode**, not a fixed code: `from_job` (default), `from_resume`, `en`, `ru`
+- `from_job`/`from_resume` auto-detect language by piggybacking on existing LLM calls (job_parser, name_extractor)
+- `resolve_target_language(mode, job_lang_code, resume_lang_code)` in `models/language.py` resolves mode → Language
+- `get_language_safe(code)` returns English for unknown codes (never raises)
+- Translation checker skips when source language == target language (not just when target is English)
+- `source_language` is threaded through `orchestration.py` → `run_filters()` → all filter `evaluate()` calls
 
 ### Environment Variables
 
