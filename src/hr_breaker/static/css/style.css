@@ -36,36 +36,63 @@ body {
 }
 .header h1 { margin: 0; font-size: 1.2rem; }
 
-.header-actions { display: flex; align-items: center; gap: 12px; }
-
-.btn-icon {
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-    padding: 6px;
-    border-radius: 6px;
-    font-size: 1.2rem;
-    display: flex;
-    align-items: center;
-}
-.btn-icon:hover { color: var(--text); background: var(--surface-hover); }
-
-.model-badge {
-    font-size: 0.75rem;
-    padding: 2px 8px;
-    border-radius: 10px;
-    background: var(--border);
-    color: var(--text-secondary);
+/* --- Layout: main + sidebar --- */
+.layout {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    min-height: calc(100vh - 49px);
 }
 
-/* --- Main content --- */
 .main {
-    max-width: 800px;
-    margin: 0 auto;
     padding: 24px;
+    max-width: 900px;
 }
 
+.sidebar {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    height: calc(100vh - 49px);
+    position: sticky;
+    top: 49px;
+}
+
+/* --- Sidebar sections --- */
+.sidebar-section { border-bottom: 1px solid var(--border); }
+
+.sidebar-section-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 16px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0;
+    user-select: none;
+}
+.sidebar-section-title:hover { color: var(--text); }
+
+.sidebar-section-body { padding: 0 16px 12px; }
+
+.sidebar-hint { font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 8px; }
+
+/* --- Chevron --- */
+.chevron {
+    display: inline-block;
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid currentColor;
+    transition: transform 0.2s;
+}
+.chevron.open { transform: rotate(180deg); }
+
+/* --- Typography --- */
 h1 {
     font-size: 1.4rem;
     font-weight: 600;
@@ -80,6 +107,7 @@ h2 {
     color: var(--text);
 }
 
+/* --- Input grid --- */
 .input-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -87,11 +115,14 @@ h2 {
     margin-bottom: 20px;
 }
 
+/* --- Cards --- */
 .card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 16px;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .card-header {
@@ -263,11 +294,39 @@ label {
     border-radius: 4px;
     font-size: 0.8rem;
     color: var(--text-secondary);
-    max-height: 150px;
+    max-height: 500px;
     overflow-y: auto;
     white-space: pre-wrap;
     word-break: break-word;
 }
+
+/* --- Cached resume picker --- */
+.cached-resumes { margin-bottom: 8px; }
+.cached-resume-item {
+    display: flex;
+    flex-direction: column;
+    padding: 6px 10px;
+    background: var(--bg);
+    border-radius: 4px;
+    cursor: pointer;
+    margin-bottom: 4px;
+    transition: background 0.15s;
+    overflow: hidden;
+    min-width: 0;
+}
+.cached-resume-item:hover { background: var(--surface-hover); }
+.cached-resume-item .name { font-size: 0.85rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.cached-resume-item .meta { font-size: 0.7rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-remove {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0 2px;
+}
+.btn-remove:hover { color: var(--error); }
 
 /* --- Progress/results --- */
 .progress-section {
@@ -329,7 +388,11 @@ label {
     margin-bottom: 16px;
 }
 
-/* --- Settings rows --- */
+/* --- Setting fields --- */
+.setting-field { margin-bottom: 10px; }
+.setting-field label { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 2px; }
+
+/* --- Settings rows (checkboxes) --- */
 .setting-row {
     display: flex;
     align-items: center;
@@ -349,80 +412,6 @@ label {
     width: auto;
     flex: 1;
 }
-
-/* --- Drawer overlay --- */
-.drawer-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.5);
-    z-index: 20;
-}
-
-/* --- Drawer --- */
-.drawer {
-    position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: 420px;
-    background: var(--surface);
-    border-left: 1px solid var(--border);
-    z-index: 30;
-    transform: translateX(100%);
-    transition: transform 0.25s ease;
-    display: flex;
-    flex-direction: column;
-}
-.drawer.open { transform: translateX(0); }
-
-.drawer-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--border);
-}
-.drawer-header h2 { margin: 0; font-size: 1.1rem; }
-
-.drawer-body { flex: 1; overflow-y: auto; }
-
-.drawer-section { border-bottom: 1px solid var(--border); }
-
-.drawer-section-title {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 20px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin: 0;
-    user-select: none;
-}
-.drawer-section-title:hover { color: var(--text); }
-
-.drawer-section-body { padding: 0 20px 16px; }
-
-.drawer-hint { font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 8px; }
-
-/* --- Chevron --- */
-.chevron {
-    display: inline-block;
-    width: 0;
-    height: 0;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 5px solid currentColor;
-    transition: transform 0.2s;
-}
-.chevron.open { transform: rotate(180deg); }
-
-/* --- Setting fields --- */
-.setting-field { margin-bottom: 10px; }
-.setting-field label { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 2px; }
 
 /* --- API key input row --- */
 .key-input-row { display: flex; gap: 8px; align-items: center; }
@@ -490,6 +479,12 @@ label {
 
 /* --- Responsive --- */
 @media (max-width: 768px) {
-    .drawer { width: 100%; }
+    .layout { grid-template-columns: 1fr; }
+    .sidebar {
+        position: static;
+        height: auto;
+        border-left: none;
+        border-top: 1px solid var(--border);
+    }
     .input-grid { grid-template-columns: 1fr; }
 }

@@ -15,6 +15,7 @@ class ResumeSource(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
     first_name: str | None = None
     last_name: str | None = None
+    filename: str | None = None  # Original upload filename
     instructions: str | None = None
 
     @model_validator(mode="before")

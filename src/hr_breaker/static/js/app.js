@@ -68,6 +68,10 @@ document.addEventListener('alpine:init', () => {
             cancelled: false,
         },
 
+        // Cached resumes/jobs for pickers
+        cachedResumes: [],
+        cachedJobs: [],
+
         // History
         history: [],
 
@@ -76,7 +80,7 @@ document.addEventListener('alpine:init', () => {
 
         // Drawer state
         drawerOpen: false,
-        drawerSections: { options: true, models: false, apiKeys: false, thresholds: false, history: true },
+        drawerSections: { options: true, models: true, apiKeys: false, thresholds: false, history: true },
         showPdfPreview: false,
 
         // Computed getters
@@ -101,32 +105,28 @@ document.addEventListener('alpine:init', () => {
             ];
         },
 
-        get activeProModel() {
-            return this.settings.proModel || this.appSettings.proModel || '...';
-        },
-
         async init() {
             this._restoreFromStorage();
             await Promise.all([
                 this.loadSettings(),
                 this.loadCachedResumes(),
+                this.loadCachedJobs(),
                 this.loadHistory(),
                 this.checkActiveOptimization(),
             ]);
+            await this.autoSelectLatestResume();
 
             // Watch for changes and persist
-            this.$watch('job.text', () => this._saveToStorage());
-            this.$watch('job.loaded', () => this._saveToStorage());
-            this.$watch('job.preview', () => this._saveToStorage());
             this.$watch('settings', () => this._saveToStorage());
+
         },
 
         _storageKey: 'hr-breaker-state',
 
         _saveToStorage() {
             const state = {
-                job: { loaded: this.job.loaded, text: this.job.text, preview: this.job.preview },
                 settings: { ...this.settings, apiKeys: undefined },
+                drawerSections: this.drawerSections,
             };
             try { localStorage.setItem(this._storageKey, JSON.stringify(state)); } catch {}
         },
@@ -138,17 +138,15 @@ document.addEventListener('alpine:init', () => {
                 const raw = localStorage.getItem(this._storageKey);
                 if (!raw) return;
                 const state = JSON.parse(raw);
-                if (state.job && state.job.loaded) {
-                    this.job.loaded = true;
-                    this.job.text = state.job.text;
-                    this.job.preview = state.job.preview;
-                }
                 if (state.settings) {
                     const { apiKeys, ...rest } = state.settings;
                     Object.assign(this.settings, rest);
                     // Always reset apiKeys to empty (never restore from storage)
                     this.settings.apiKeys = { gemini: '', openrouter: '', openai: '', anthropic: '', moonshot: '' };
                     this._restoredFromStorage = true;
+                }
+                if (state.drawerSections) {
+                    Object.assign(this.drawerSections, state.drawerSections);
                 }
             } catch {}
         },
@@ -164,6 +162,11 @@ document.addEventListener('alpine:init', () => {
                 this.appSettings.reasoningEffort = data.reasoning_effort || '';
                 this.appSettings.apiKeysSet = data.api_keys_set || {};
                 this.appSettings.filterThresholds = data.filter_thresholds || {};
+                // Always prefill models/reasoning from server if not customized
+                if (!this.settings.proModel) this.settings.proModel = data.pro_model || '';
+                if (!this.settings.flashModel) this.settings.flashModel = data.flash_model || '';
+                if (!this.settings.embeddingModel) this.settings.embeddingModel = data.embedding_model || '';
+                if (!this.settings.reasoningEffort) this.settings.reasoningEffort = data.reasoning_effort || '';
                 if (!this._restoredFromStorage) {
                     this.settings.language = data.default_language;
                     this.settings.maxIterations = data.max_iterations;
@@ -180,19 +183,48 @@ document.addEventListener('alpine:init', () => {
             try {
                 const resp = await fetch('/api/resume/cached');
                 const resumes = await resp.json();
-                if (resumes.length > 0) {
-                    const latest = resumes[resumes.length - 1];
-                    this.resume.loaded = true;
-                    this.resume.checksum = latest.checksum;
-                    this.resume.firstName = latest.first_name;
-                    this.resume.lastName = latest.last_name;
-                    this.resume.contentPreview = latest.content_preview;
-                    if (latest.instructions) {
-                        this.settings.instructions = latest.instructions;
-                    }
-                }
+                this.cachedResumes = resumes.slice().reverse();
             } catch (e) {
                 console.error('Failed to load cached resumes:', e);
+            }
+        },
+
+        async autoSelectLatestResume() {
+            if (this.cachedResumes.length > 0) {
+                const latest = this.cachedResumes[0]; // already newest-first
+                await this.selectCachedResume(latest);
+            }
+        },
+
+        async removeCachedResume(checksum) {
+            await fetch('/api/resume/cached/' + checksum, { method: 'DELETE' });
+            this.cachedResumes = this.cachedResumes.filter(r => r.checksum !== checksum);
+            if (this.resume.checksum === checksum) {
+                this.clearResume();
+            }
+        },
+
+        async selectCachedResume(r) {
+            this.resume.loaded = true;
+            this.resume.checksum = r.checksum;
+            this.resume.firstName = r.first_name;
+            this.resume.lastName = r.last_name;
+            this.resume.contentPreview = ''; // loaded on demand
+            this.resume.error = null;
+            if (r.instructions) {
+                this.settings.instructions = r.instructions;
+            }
+            await fetch('/api/resume/select/' + r.checksum, { method: 'POST' });
+        },
+
+        async loadResumeContent() {
+            if (this.resume.contentPreview || !this.resume.checksum) return;
+            try {
+                const resp = await fetch('/api/resume/' + this.resume.checksum);
+                const data = await resp.json();
+                this.resume.contentPreview = data.content;
+            } catch (e) {
+                console.error('Failed to load resume content:', e);
             }
         },
 
@@ -232,6 +264,11 @@ document.addEventListener('alpine:init', () => {
                 const formData = new FormData();
                 formData.append('file', file);
                 const resp = await fetch('/api/resume/upload', { method: 'POST', body: formData });
+                if (!resp.ok) {
+                    const text = await resp.text();
+                    try { const j = JSON.parse(text); throw new Error(j.error || j.detail || text); }
+                    catch (pe) { if (pe instanceof SyntaxError) throw new Error(text); throw pe; }
+                }
                 const data = await resp.json();
 
                 if (data.error) throw new Error(data.error);
@@ -240,7 +277,8 @@ document.addEventListener('alpine:init', () => {
                 this.resume.checksum = data.checksum;
                 this.resume.firstName = data.first_name;
                 this.resume.lastName = data.last_name;
-                this.resume.contentPreview = data.content_preview;
+                this.resume.contentPreview = '';
+                this.loadCachedResumes();
             } catch (e) {
                 this.resume.error = 'Upload failed: ' + e.message;
             } finally {
@@ -259,6 +297,11 @@ document.addEventListener('alpine:init', () => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ content: this.resume.pasteText }),
                 });
+                if (!resp.ok) {
+                    const text = await resp.text();
+                    try { const j = JSON.parse(text); throw new Error(j.error || j.detail || text); }
+                    catch (pe) { if (pe instanceof SyntaxError) throw new Error(text); throw pe; }
+                }
                 const data = await resp.json();
 
                 if (data.error) throw new Error(data.error);
@@ -267,8 +310,9 @@ document.addEventListener('alpine:init', () => {
                 this.resume.checksum = data.checksum;
                 this.resume.firstName = data.first_name;
                 this.resume.lastName = data.last_name;
-                this.resume.contentPreview = data.content_preview;
+                this.resume.contentPreview = '';
                 this.resume.pasteText = '';
+                this.loadCachedResumes();
             } catch (e) {
                 this.resume.error = 'Failed: ' + e.message;
             } finally {
@@ -315,6 +359,7 @@ document.addEventListener('alpine:init', () => {
                 this.job.loaded = true;
                 this.job.text = data.text;
                 this.job.preview = data.text.substring(0, 200).replace(/\n/g, ' ');
+                this.loadCachedJobs();
             } catch (e) {
                 this.job.error = 'Scrape failed: ' + e.message;
             } finally {
@@ -322,12 +367,18 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        submitPasteJob() {
+        async submitPasteJob() {
             if (!this.job.pasteText.trim()) return;
             this.job.loaded = true;
             this.job.text = this.job.pasteText;
             this.job.preview = this.job.pasteText.substring(0, 200).replace(/\n/g, ' ');
             this.job.pasteText = '';
+            await fetch('/api/job/paste', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: this.job.text }),
+            });
+            this.loadCachedJobs();
         },
 
         clearJob() {
@@ -337,8 +388,42 @@ document.addEventListener('alpine:init', () => {
             this.job.url = '';
             this.job.error = null;
             this.job.showPreview = false;
-            this._saveToStorage();
             this.clearResult();
+        },
+
+        async loadCachedJobs() {
+            try {
+                const resp = await fetch('/api/job/cached');
+                this.cachedJobs = (await resp.json()).slice().reverse();
+            } catch (e) {
+                console.error('Failed to load cached jobs:', e);
+            }
+        },
+
+        async removeCachedJob(checksum) {
+            await fetch('/api/job/cached/' + checksum, { method: 'DELETE' });
+            this.cachedJobs = this.cachedJobs.filter(j => j.checksum !== checksum);
+            // If the removed job was the currently loaded one, clear it
+            if (this.job.loaded && !this.job.text) {
+                this.clearJob();
+            }
+        },
+
+        async selectCachedJob(j) {
+            this.job.loading = true;
+            this.job.error = null;
+            try {
+                const resp = await fetch('/api/job/' + j.checksum);
+                const data = await resp.json();
+                this.job.loaded = true;
+                this.job.text = data.text;
+                this.job.preview = data.text.substring(0, 200).replace(/\n/g, ' ');
+                await fetch('/api/job/select/' + j.checksum, { method: 'POST' });
+            } catch (e) {
+                this.job.error = 'Failed to load job: ' + e.message;
+            } finally {
+                this.job.loading = false;
+            }
         },
 
         clearResult() {
@@ -567,6 +652,21 @@ document.addEventListener('alpine:init', () => {
         formatTimestamp(iso) {
             const d = new Date(iso);
             return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        },
+
+        formatShortDate(iso) {
+            if (!iso) return '';
+            const d = new Date(iso);
+            return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        },
+
+        shortenUrl(url) {
+            if (!url || url === 'pasted') return url;
+            try {
+                const u = new URL(url);
+                const path = u.pathname.length > 30 ? u.pathname.substring(0, 30) + '...' : u.pathname;
+                return u.hostname + path;
+            } catch { return url.substring(0, 40); }
         },
     }));
 });

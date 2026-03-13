@@ -129,5 +129,4 @@ async def test_stream_nonexistent(client):
 @pytest.mark.asyncio
 async def test_pdf_not_found(client):
     resp = await client.get("/api/pdf/nonexistent.pdf")
-    assert resp.status_code == 200
-    assert resp.json()["error"] == "PDF not found"
+    assert resp.status_code == 404

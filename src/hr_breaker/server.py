@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from hr_breaker.agents import extract_name, parse_job_posting
-from hr_breaker.config import get_settings, logger
+from hr_breaker.config import get_settings, logger, settings_override
 from hr_breaker.models import (
     GeneratedPDF,
     ResumeSource,
@@ -27,6 +27,7 @@ from hr_breaker.orchestration import optimize_for_job
 from hr_breaker.services import (
     PDFStorage,
     ResumeCache,
+    JobCache,
     scrape_job_posting,
     ScrapingError,
     CloudflareBlockedError,
@@ -68,6 +69,10 @@ class ScrapeJobRequest(BaseModel):
     url: str
 
 
+class PasteJobRequest(BaseModel):
+    text: str
+
+
 class OptimizeRequest(BaseModel):
     resume_checksum: str
     job_text: str
@@ -77,6 +82,13 @@ class OptimizeRequest(BaseModel):
     language: str = "en"
     max_iterations: int | None = None
     instructions: str | None = None
+    # Per-run overrides (None = use server defaults)
+    pro_model: str | None = None
+    flash_model: str | None = None
+    embedding_model: str | None = None
+    reasoning_effort: str | None = None
+    api_keys: dict[str, str] | None = None
+    filter_thresholds: dict[str, float] | None = None
 
 
 # --- Endpoints ---
@@ -122,10 +134,17 @@ async def get_app_settings():
 @app.post("/api/resume/upload")
 async def upload_resume(file: UploadFile = File(...)):
     data = await file.read()
-    content = load_resume_content_from_upload(file.filename, data)
-    first_name, last_name = await extract_name(content)
+    try:
+        content = load_resume_content_from_upload(file.filename, data)
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": f"Failed to read file: {e}"})
 
-    source = ResumeSource(content=content, first_name=first_name, last_name=last_name)
+    try:
+        first_name, last_name = await extract_name(content)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to extract name: {e}"})
+
+    source = ResumeSource(content=content, first_name=first_name, last_name=last_name, filename=file.filename)
 
     # Cache
     cache = ResumeCache()
@@ -136,7 +155,6 @@ async def upload_resume(file: UploadFile = File(...)):
         "checksum": source.checksum,
         "first_name": first_name,
         "last_name": last_name,
-        "content_preview": content[:200],
     }
 
 
@@ -146,8 +164,12 @@ async def paste_resume(req: PasteResumeRequest):
     if not content:
         raise HTTPException(status_code=400, detail="Empty content")
 
-    first_name, last_name = await extract_name(content)
-    source = ResumeSource(content=content, first_name=first_name, last_name=last_name)
+    try:
+        first_name, last_name = await extract_name(content)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to extract name: {e}"})
+
+    source = ResumeSource(content=content, first_name=first_name, last_name=last_name, filename="pasted")
 
     cache = ResumeCache()
     cache.put(source)
@@ -157,8 +179,20 @@ async def paste_resume(req: PasteResumeRequest):
         "checksum": source.checksum,
         "first_name": first_name,
         "last_name": last_name,
-        "content_preview": content[:200],
     }
+
+
+@app.post("/api/resume/select/{checksum}")
+async def select_resume(checksum: str):
+    ResumeCache().touch(checksum)
+    return {"ok": True}
+
+
+@app.delete("/api/resume/cached/{checksum}")
+async def delete_cached_resume(checksum: str):
+    ResumeCache().delete(checksum)
+    resume_store.pop(checksum, None)
+    return {"ok": True}
 
 
 @app.get("/api/resume/cached")
@@ -173,22 +207,75 @@ async def cached_resumes():
             "checksum": r.checksum,
             "first_name": r.first_name,
             "last_name": r.last_name,
-            "content_preview": r.content[:200],
             "instructions": r.instructions,
+            "filename": r.filename,
+            "timestamp": r.timestamp.isoformat(),
         }
         for r in resumes
     ]
+
+
+@app.get("/api/resume/{checksum}")
+async def get_resume(checksum: str):
+    source = resume_store.get(checksum)
+    if not source:
+        raise HTTPException(status_code=404, detail="Resume not found")
+    return {"content": source.content}
 
 
 @app.post("/api/job/scrape")
 async def scrape_job(req: ScrapeJobRequest):
     try:
         text = scrape_job_posting(req.url)
+        JobCache().put(text, source=req.url)
         return {"text": text}
     except CloudflareBlockedError:
         return {"error": "cloudflare", "message": "Site has bot protection. Copy & paste instead."}
     except ScrapingError as e:
         return {"error": "scrape_failed", "message": str(e)}
+
+
+@app.post("/api/job/paste")
+async def paste_job(req: PasteJobRequest):
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Empty content")
+    JobCache().put(text, source="pasted")
+    return {"ok": True}
+
+
+@app.get("/api/job/cached")
+async def cached_jobs():
+    jobs = JobCache().list_all()
+    return [
+        {
+            "checksum": j["checksum"],
+            "preview": j["text"][:120].replace("\n", " "),
+            "source": j.get("source"),
+            "timestamp": j.get("timestamp"),
+        }
+        for j in jobs
+    ]
+
+
+@app.get("/api/job/{checksum}")
+async def get_job(checksum: str):
+    job = JobCache().get(checksum)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"text": job["text"]}
+
+
+@app.post("/api/job/select/{checksum}")
+async def select_job(checksum: str):
+    JobCache().touch(checksum)
+    return {"ok": True}
+
+
+@app.delete("/api/job/cached/{checksum}")
+async def delete_cached_job(checksum: str):
+    JobCache().delete(checksum)
+    return {"ok": True}
 
 
 def _sse_event(event: str, data: dict) -> str:
@@ -261,8 +348,7 @@ async def _sse_generator(opt_id: str) -> AsyncGenerator[str, None]:
 
     try:
         # Replay already-accumulated events
-        events_snapshot = list(_active_optimization["events"])
-        for evt in events_snapshot:
+        for evt in list(_active_optimization["events"]):
             yield evt
 
         # If task already done, no more live events
@@ -285,40 +371,11 @@ async def _sse_generator(opt_id: str) -> AsyncGenerator[str, None]:
 @app.get("/api/optimize/stream/{optimization_id}")
 async def stream_optimization(optimization_id: str):
     """Reconnect to an active or completed optimization's SSE stream."""
-    global _active_optimization
-
     if _active_optimization is None or _active_optimization["id"] != optimization_id:
         return JSONResponse(status_code=404, content={"error": "Optimization not found"})
 
-    async def reconnect_generator() -> AsyncGenerator[str, None]:
-        # Replay all accumulated events
-        events_snapshot = list(_active_optimization["events"])
-        for evt in events_snapshot:
-            yield evt
-
-        # If task is done, no more live events
-        if _active_optimization["task"].done():
-            return
-
-        # Stream live events from a new queue subscriber
-        # We create a secondary queue that receives future events
-        live_queue: asyncio.Queue = asyncio.Queue()
-        _active_optimization.setdefault("subscribers", []).append(live_queue)
-        try:
-            while True:
-                msg = await live_queue.get()
-                if msg is None:
-                    break
-                yield msg
-        finally:
-            if _active_optimization and "subscribers" in _active_optimization:
-                try:
-                    _active_optimization["subscribers"].remove(live_queue)
-                except ValueError:
-                    pass
-
     return StreamingResponse(
-        reconnect_generator(),
+        _sse_generator(optimization_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -372,7 +429,42 @@ def _broadcast(msg: str | None) -> None:
         sub_queue.put_nowait(msg)
 
 
+def _build_overrides(req: OptimizeRequest) -> dict:
+    """Build settings override dict from request fields."""
+    overrides = {}
+    if req.pro_model:
+        overrides["pro_model"] = req.pro_model
+    if req.flash_model:
+        overrides["flash_model"] = req.flash_model
+    if req.embedding_model:
+        overrides["embedding_model"] = req.embedding_model
+    if req.reasoning_effort:
+        overrides["reasoning_effort"] = req.reasoning_effort
+    if req.api_keys:
+        overrides["api_keys"] = req.api_keys
+    if req.filter_thresholds:
+        threshold_map = {
+            "hallucination": "filter_hallucination_threshold",
+            "keyword": "filter_keyword_threshold",
+            "llm": "filter_llm_threshold",
+            "vector": "filter_vector_threshold",
+            "ai_generated": "filter_ai_generated_threshold",
+            "translation": "filter_translation_threshold",
+        }
+        for short_name, value in req.filter_thresholds.items():
+            if short_name in threshold_map:
+                overrides[threshold_map[short_name]] = value
+    return overrides
+
+
 async def _run_optimization(req: OptimizeRequest, source: ResumeSource):
+    global _active_optimization
+    overrides = _build_overrides(req)
+    with settings_override(overrides):
+        await _run_optimization_inner(req, source)
+
+
+async def _run_optimization_inner(req: OptimizeRequest, source: ResumeSource):
     global _active_optimization
     try:
         opt_id = _active_optimization["id"]
@@ -521,12 +613,20 @@ async def list_history():
 
 
 @app.get("/api/pdf/{filename}")
-async def download_pdf(filename: str):
+async def download_pdf(filename: str, inline: bool = False):
     settings = get_settings()
-    pdf_path = settings.output_dir / filename
+    pdf_path = (settings.output_dir / filename).resolve()
+    if not pdf_path.is_relative_to(settings.output_dir.resolve()):
+        raise HTTPException(status_code=400, detail="Invalid filename")
     if not pdf_path.exists():
-        return {"error": "PDF not found"}
-    return FileResponse(pdf_path, media_type="application/pdf", filename=filename)
+        raise HTTPException(status_code=404, detail="PDF not found")
+    disposition = "inline" if inline else "attachment"
+    return FileResponse(
+        pdf_path,
+        media_type="application/pdf",
+        filename=filename,
+        content_disposition_type=disposition,
+    )
 
 
 @app.post("/api/open-folder")
