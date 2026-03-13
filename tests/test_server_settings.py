@@ -16,7 +16,7 @@ async def test_settings_returns_all_configurable_fields(client):
     assert resp.status_code == 200
     data = resp.json()
     # Existing
-    assert "languages" in data
+    assert "language_modes" in data
     assert "pro_model" in data
     assert "flash_model" in data
     assert "max_iterations" in data

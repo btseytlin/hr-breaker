@@ -375,8 +375,6 @@ document.addEventListener('alpine:init', () => {
                 this.job.loaded = true;
                 this.job.text = data.text;
                 this.job.preview = data.text.substring(0, 200).replace(/\n/g, ' ');
-                this._selectedJobChecksum = data.checksum;
-                this._saveToStorage();
                 this.loadCachedJobs();
             } catch (e) {
                 this.job.error = 'Scrape failed: ' + e.message;
@@ -396,9 +394,6 @@ document.addEventListener('alpine:init', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ text: this.job.text }),
             });
-            const data = await resp.json();
-            this._selectedJobChecksum = data.checksum;
-            this._saveToStorage();
             this.loadCachedJobs();
         },
 
@@ -409,9 +404,7 @@ document.addEventListener('alpine:init', () => {
             this.job.url = '';
             this.job.error = null;
             this.job.showPreview = false;
-            this._selectedJobChecksum = null;
             this.clearResult();
-            this._saveToStorage();
         },
 
         async loadCachedJobs() {
