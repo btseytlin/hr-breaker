@@ -14,8 +14,8 @@ Resume optimization tool that transforms any resume into a job-specific, ATS-fri
 - **Opinionated formatting** - Follows proven resume guidelines (one page, no fluff, etc.)
 - **Multi-filter validation** - ATS simulation, keyword matching, structure checks
 - **User instructions** - Guide the optimizer with extra context ("Focus on Python", "Add K8s cert")
-- **Multi-language output** - Optimize in English, then translate (e.g. `-l ru` for Russian)
-- **Web UI + CLI** - Streamlit dashboard or command-line
+- **Multi-language output** - Auto-detect language from job/resume, or force a specific language (e.g. `-l ru`)
+- **Web UI + CLI** - FastAPI + Alpine.js web app or command-line
 - **Debug mode** - Inspect optimization iterations
 - **Cross-platform** - Works on macOS, Linux, and Windows
 
@@ -36,36 +36,23 @@ uv sync
 
 # Configure
 cp .env.example .env
-# Edit .env and add your GOOGLE_API_KEY (for Gemini) or MOONSHOT_API_KEY (for Moonshot AI)
+# Edit .env and add your GEMINI_API_KEY (or configure another LLM provider)
 
-# Run web UI
-uv run streamlit run src/hr_breaker/main.py
+# Run web UI (auto-opens browser at http://localhost:8899)
+uv run hr-breaker serve
 ```
-
-### Using Moonshot AI (Kimi)
-
-To use Moonshot AI instead of Gemini:
-
-1. Get a Moonshot AI API key from https://platform.moonshot.ai/
-2. Set `MOONSHOT_API_KEY` in your `.env` file
-3. Configure models to use Moonshot:
-   ```bash
-   PRO_MODEL=moonshot/kimi-k2-5
-   FLASH_MODEL=moonshot/kimi-k2-5
-   ```
-
-Moonshot AI models work via LiteLLM — see [LiteLLM Moonshot docs](https://docs.litellm.ai/docs/providers/moonshot) for available models.
 
 ## Usage
 
 ### Web UI
 
-Launch with `uv run streamlit run src/hr_breaker/main.py`
+Launch with `uv run hr-breaker serve` (default: http://localhost:8899)
 
-1. Paste or upload resume
-2. Enter job URL or description
-3. Click optimize
-4. Download PDF
+1. Paste or upload resume (cached for reuse across jobs)
+2. Enter job URL or paste description
+3. Configure settings in sidebar (models, API keys, filter thresholds)
+4. Click optimize — real-time progress via SSE
+5. Preview and download PDF
 
 ### CLI
 
@@ -76,14 +63,15 @@ uv run hr-breaker optimize resume.txt https://example.com/job
 # From job description file
 uv run hr-breaker optimize resume.txt job.txt
 
-# Debug mode (saves iterations)
-uv run hr-breaker optimize resume.txt job.txt -d
+# Debug mode (saves iterations) — on by default, -D to disable
+uv run hr-breaker optimize resume.txt job.txt -D
 
 # User instructions - guide the optimizer
 uv run hr-breaker optimize resume.txt job.txt -i "Focus on Python, add K8s cert"
 
-# Translate output to another language
+# Language modes: from_job (default), from_resume, en, ru, etc.
 uv run hr-breaker optimize resume.txt https://example.com/job -l ru
+uv run hr-breaker optimize resume.txt https://example.com/job -l from_job
 
 # Lenient mode - relaxes content constraints but still prevents fabricating experience. Use with caution!
 uv run hr-breaker optimize resume.txt job.txt --no-shame
@@ -94,13 +82,13 @@ uv run hr-breaker list
 
 ## Output
 
-- Final PDFs: `output/<name>_<company>_<role>.pdf`
-- Debug iterations: `output/debug_<company>_<role>/`
+- Final PDFs: `output/<MMDD_HHMM>_<name>_<company>_<role>_<lang>.pdf`
+- Debug iterations: `output/<MMDD_HHMM>_debug_<company>_<role>/`
 - Records: `output/index.json`
 
 ## Configuration
 
-Copy `.env.example` to `.env` and set `GOOGLE_API_KEY` (for Gemini) or `MOONSHOT_API_KEY` (for Moonshot AI). See `.env.example` for all available options.
+Copy `.env.example` to `.env` and set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`). Models are configurable via LiteLLM — any provider (OpenAI, Anthropic, Moonshot, etc.) works by setting `PRO_MODEL`, `FLASH_MODEL`, and the corresponding API key. See `.env.example` for all options.
 
 ---
 
@@ -113,8 +101,9 @@ src/hr_breaker/
 ├── services/        # Rendering, scraping, caching
 │   └── scrapers/    # Job scraper implementations
 ├── models/          # Pydantic data models
+├── static/          # Frontend (Alpine.js + CSS + JS)
 ├── orchestration.py # Core optimization loop
-├── main.py          # Streamlit UI
+├── server.py        # FastAPI app (API + SSE streaming)
 └── cli.py           # Click CLI
 ```
 
@@ -127,6 +116,7 @@ src/hr_breaker/
 - 5: LLMChecker - Visual formatting check and LLM-based ATS simulation
 - 6: VectorSimilarityMatcher - Semantic similarity
 - 7: AIGeneratedChecker - Detect AI-sounding text
+- 8: TranslationQualityChecker - Translation quality (skipped when source == target language)
 
 ## Development
 
