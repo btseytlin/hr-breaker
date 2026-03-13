@@ -465,6 +465,52 @@ label {
 .action-row { display: flex; gap: 8px; }
 .empty-hint { font-size: 0.8rem; color: var(--text-secondary); }
 
+/* --- Log panel --- */
+.log-section { margin: 8px 0; }
+.log-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+.log-toggle:hover { color: var(--text); }
+
+.log-panel {
+    margin-top: 6px;
+    background: #0a0c10;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    max-height: 240px;
+    overflow-y: auto;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 0.75rem;
+    line-height: 1.5;
+}
+
+.log-line {
+    white-space: pre-wrap;
+    word-break: break-all;
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+}
+
+.log-level {
+    flex-shrink: 0;
+    font-weight: 600;
+}
+
+.log-msg { flex: 1; }
+.log-info { color: var(--text-secondary); }
+.log-warning { color: var(--warning); }
+.log-error { color: var(--error); }
+.log-debug { color: #6e7681; }
+.log-critical { color: var(--error); font-weight: 700; }
+
 /* --- Spinner --- */
 .spinner {
     display: inline-block;

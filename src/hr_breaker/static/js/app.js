@@ -63,6 +63,8 @@ document.addEventListener('alpine:init', () => {
             abortController: null,
             statusMessage: '',
             iterations: [],
+            logs: [],
+            logsOpen: false,
             finalResult: null,
             error: null,
             cancelled: false,
@@ -127,11 +129,13 @@ document.addEventListener('alpine:init', () => {
             const state = {
                 settings: { ...this.settings, apiKeys: undefined },
                 drawerSections: this.drawerSections,
+                selectedResumeChecksum: this.resume.checksum,
             };
             try { localStorage.setItem(this._storageKey, JSON.stringify(state)); } catch {}
         },
 
         _restoredFromStorage: false,
+        _savedResumeChecksum: null,
 
         _restoreFromStorage() {
             try {
@@ -148,6 +152,8 @@ document.addEventListener('alpine:init', () => {
                 if (state.drawerSections) {
                     Object.assign(this.drawerSections, state.drawerSections);
                 }
+                // null means explicitly cleared, undefined means never saved
+                this._savedResumeChecksum = state.selectedResumeChecksum;
             } catch {}
         },
 
@@ -190,10 +196,21 @@ document.addEventListener('alpine:init', () => {
         },
 
         async autoSelectLatestResume() {
-            if (this.cachedResumes.length > 0) {
-                const latest = this.cachedResumes[0]; // already newest-first
-                await this.selectCachedResume(latest);
+            // null = user explicitly cleared resume, don't auto-select
+            if (this._savedResumeChecksum === null) return;
+            if (this.cachedResumes.length === 0) return;
+
+            // Try to restore previously selected resume
+            if (this._savedResumeChecksum) {
+                const saved = this.cachedResumes.find(r => r.checksum === this._savedResumeChecksum);
+                if (saved) {
+                    await this.selectCachedResume(saved);
+                    return;
+                }
             }
+            // First visit (never saved) — pick latest
+            const latest = this.cachedResumes[0];
+            await this.selectCachedResume(latest);
         },
 
         async removeCachedResume(checksum) {
@@ -214,6 +231,7 @@ document.addEventListener('alpine:init', () => {
             if (r.instructions) {
                 this.settings.instructions = r.instructions;
             }
+            this._saveToStorage();
             await fetch('/api/resume/select/' + r.checksum, { method: 'POST' });
         },
 
@@ -329,6 +347,7 @@ document.addEventListener('alpine:init', () => {
             this.resume.showPreview = false;
             this.resume.error = null;
             this.clearResult();
+            this._saveToStorage();
         },
 
         // --- Job actions ---
@@ -429,6 +448,8 @@ document.addEventListener('alpine:init', () => {
         clearResult() {
             this.optimization.finalResult = null;
             this.optimization.iterations = [];
+            this.optimization.logs = [];
+            this.optimization.logsOpen = false;
             this.optimization.error = null;
             this.optimization.cancelled = false;
             this.optimization.statusMessage = '';
@@ -485,6 +506,8 @@ document.addEventListener('alpine:init', () => {
 
             this.optimization.running = true;
             this.optimization.iterations = [];
+            this.optimization.logs = [];
+            this.optimization.logsOpen = false;
             this.optimization.finalResult = null;
             this.optimization.error = null;
             this.optimization.cancelled = false;
@@ -621,11 +644,26 @@ document.addEventListener('alpine:init', () => {
                     this.optimization.statusMessage = '';
                     this.optimization.running = false;
                     break;
+                case 'log':
+                    this.optimization.logs.push(data);
+                    // Cap at 200 entries
+                    if (this.optimization.logs.length > 200) {
+                        this.optimization.logs.splice(0, this.optimization.logs.length - 200);
+                    }
+                    this._scrollLogPanel();
+                    break;
                 case 'error':
                     this.optimization.error = data.message;
                     this.optimization.running = false;
                     break;
             }
+        },
+
+        _scrollLogPanel() {
+            this.$nextTick(() => {
+                const el = document.getElementById('log-panel');
+                if (el) el.scrollTop = el.scrollHeight;
+            });
         },
 
         toggleIteration(idx) {

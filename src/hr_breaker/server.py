@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import platform
 import subprocess
@@ -36,6 +37,20 @@ from hr_breaker.services.pdf_storage import generate_run_id
 from hr_breaker.services.pdf_parser import load_resume_content_from_upload
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+class _SSELogHandler(logging.Handler):
+    """Logging handler that emits log records as SSE events."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            _emit("log", {
+                "level": record.levelname,
+                "message": self.format(record),
+                "logger": record.name,
+            })
+        except Exception:
+            self.handleError(record)
 
 # NOTE: Module-level mutable state requires single-worker uvicorn (the default).
 # Do not use multiple workers — resume_store and _active_optimization are not shared.
@@ -466,6 +481,15 @@ async def _run_optimization(req: OptimizeRequest, source: ResumeSource):
 
 async def _run_optimization_inner(req: OptimizeRequest, source: ResumeSource):
     global _active_optimization
+
+    # Attach SSE log handler so backend logs stream to the UI
+    sse_handler = _SSELogHandler()
+    sse_handler.setFormatter(logging.Formatter("%(message)s"))
+    root_logger = logging.getLogger("hr_breaker")
+    original_level = root_logger.level
+    root_logger.addHandler(sse_handler)
+    root_logger.setLevel(min(original_level, logging.INFO))
+
     try:
         opt_id = _active_optimization["id"]
         _emit("started", {"id": opt_id})
@@ -589,6 +613,9 @@ async def _run_optimization_inner(req: OptimizeRequest, source: ResumeSource):
         logger.exception("Optimization error")
         _emit("error", {"message": str(e)})
     finally:
+        # Detach SSE log handler and restore original level
+        root_logger.removeHandler(sse_handler)
+        root_logger.setLevel(original_level)
         # Signal end of stream to all subscribers
         if _active_optimization is not None:
             _broadcast(None)

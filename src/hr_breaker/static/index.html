@@ -220,6 +220,22 @@
                     <span x-text="optimization.statusMessage"></span>
                 </div>
 
+                <!-- Log panel -->
+                <div x-show="optimization.logs.length > 0" class="log-section">
+                    <div class="log-toggle" @click="optimization.logsOpen = !optimization.logsOpen">
+                        <span x-text="(optimization.logsOpen ? 'Hide' : 'Show') + ' logs (' + optimization.logs.length + ')'"></span>
+                        <span class="chevron" :class="optimization.logsOpen && 'open'"></span>
+                    </div>
+                    <div x-show="optimization.logsOpen" id="log-panel" class="log-panel">
+                        <template x-for="(log, i) in optimization.logs" :key="i">
+                            <div class="log-line">
+                                <span class="log-level" :class="'log-' + log.level.toLowerCase()" x-text="log.level.substring(0, 4)"></span>
+                                <span class="log-msg" x-text="log.message"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
                 <!-- Error -->
                 <div x-show="optimization.error" class="status-banner status-fail" style="margin-top: 12px"
                      x-text="optimization.error"></div>

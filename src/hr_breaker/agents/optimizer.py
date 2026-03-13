@@ -271,6 +271,12 @@ Generate the resume HTML in {language.english_name} language.
 - Use accepted {language.english_name} equivalents where they exist and are commonly used
 - Text often expands in {language.english_name} vs English — compensate with concise phrasing, shorter synonyms, or abbreviations accepted in {language.english_name} professional context. Do NOT drop content — condense wording instead.
 """
+    else:
+        prompt += """
+## TARGET LANGUAGE: English
+
+Generate the resume HTML in English. Even if the job posting is in another language, the resume MUST be in English.
+"""
 
     if context.last_attempt:
         estimate = estimate_content_length(context.last_attempt)

@@ -25,8 +25,8 @@ class TestOptimizerLanguagePrompt:
         return IterationContext(iteration=0, original_resume=source.content)
 
     @pytest.mark.asyncio
-    async def test_no_language_instructions_when_none(self, job, source, context):
-        """No TARGET LANGUAGE block when language is None."""
+    async def test_english_language_instructions_when_none(self, job, source, context):
+        """English TARGET LANGUAGE block when language is None."""
         with patch("hr_breaker.agents.optimizer.get_optimizer_agent") as mock_get:
             mock_agent = AsyncMock()
             mock_result = MagicMock()
@@ -38,11 +38,11 @@ class TestOptimizerLanguagePrompt:
             await optimize_resume(source, job, context, language=None)
 
             prompt = mock_agent.run.call_args[0][0]
-            assert "TARGET LANGUAGE" not in prompt
+            assert "TARGET LANGUAGE: English" in prompt
 
     @pytest.mark.asyncio
-    async def test_no_language_instructions_when_english(self, job, source, context):
-        """No TARGET LANGUAGE block when language is English."""
+    async def test_english_language_instructions_when_english(self, job, source, context):
+        """English TARGET LANGUAGE block when language is English."""
         english = get_language("en")
         with patch("hr_breaker.agents.optimizer.get_optimizer_agent") as mock_get:
             mock_agent = AsyncMock()
@@ -55,7 +55,7 @@ class TestOptimizerLanguagePrompt:
             await optimize_resume(source, job, context, language=english)
 
             prompt = mock_agent.run.call_args[0][0]
-            assert "TARGET LANGUAGE" not in prompt
+            assert "TARGET LANGUAGE: English" in prompt
 
     @pytest.mark.asyncio
     async def test_russian_adds_language_instructions(self, job, source, context):
