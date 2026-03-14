@@ -1,4 +1,5 @@
 from datetime import date
+from functools import lru_cache
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
@@ -6,7 +7,7 @@ from pydantic_ai import Agent
 from hr_breaker.config import get_flash_model, get_model_settings
 from hr_breaker.models import FilterResult, OptimizedResume
 from hr_breaker.models.language import Language
-from hr_breaker.utils.retry import run_with_retry
+from hr_breaker.utils.optimization_telemetry import run_tracked_agent
 
 
 class AIGeneratedResult(BaseModel):
@@ -70,6 +71,7 @@ When listing indicators, quote specific problematic text.
 """
 
 
+@lru_cache
 def get_ai_generated_agent() -> Agent:
     agent = Agent(
         get_flash_model(),
@@ -116,7 +118,7 @@ This resume is written in {language.english_name}. This is intentional.
 """
 
     agent = get_ai_generated_agent()
-    result = await run_with_retry(agent.run, prompt)
+    result = await run_tracked_agent(agent, prompt, component="AIGeneratedChecker")
     r = result.output
 
     issues = []

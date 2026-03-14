@@ -15,12 +15,14 @@ These classes are pre-defined and styled. Use them exactly as shown:
         <span class="sep">|</span>
         <span>555-123-4567</span>
         <span class="sep">|</span>
-        <a href="https://linkedin.com/in/username">LinkedIn</a>
+        <a href="https://linkedin.com/in/username">linkedin.com/in/username</a>
         <span class="sep">|</span>
-        <a href="https://github.com/username">GitHub</a>
+        <a href="https://github.com/username">github.com/username</a>
     </div>
 </header>
 ```
+
+The contact line automatically wraps to a second line if there are many items — no extra CSS needed.
 
 ### Sections
 ```html
@@ -97,9 +99,11 @@ Use `<strong>` for category labels (NOT markdown `**bold**`):
 ```html
 <ul class="simple-list">
     <li>AWS Certified Solutions Architect, 2023</li>
-    <li>Google Cloud Professional Data Engineer, 2022</li>
+    <li>Doe J. et al., "Title of Paper", Nature 2022 (DOI: 10.1000/xyz123)</li>
 </ul>
 ```
+
+For publications: include DOI in parentheses at the end if available.
 
 ## Visual Criteria
 

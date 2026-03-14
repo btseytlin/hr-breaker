@@ -52,21 +52,30 @@
                     <template x-if="!resume.loaded">
                         <div>
                             <!-- Cached resume picker -->
-                            <template x-if="cachedResumes.length > 0">
+                            <template x-if="resumePickerEntries.length > 0">
                                 <div class="cached-resumes">
                                     <label>Previously used</label>
-                                    <template x-for="r in cachedResumes" :key="r.checksum">
-                                        <div class="cached-resume-item" @click="selectCachedResume(r)">
-                                            <div style="display: flex; justify-content: space-between; align-items: baseline;">
-                                                <span class="name" x-text="[r.first_name, r.last_name].filter(Boolean).join(' ') || 'Unknown'"></span>
-                                                <span style="display: flex; align-items: center; gap: 6px;">
-                                                    <span class="meta" x-text="formatShortDate(r.timestamp)"></span>
-                                                    <button class="btn-remove" @click.stop="removeCachedResume(r.checksum)" title="Remove">&times;</button>
-                                                </span>
+                                    <div class="resume-source-list">
+                                        <template x-for="entry in resumePickerEntries" :key="entry.key">
+                                            <div class="cached-resume-item" @click="selectResumeSource(entry)">
+                                                <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px;">
+                                                    <span class="name" x-text="entry.name"></span>
+                                                    <span class="resume-source-actions">
+                                                        <template x-if="entry.timestamp">
+                                                            <span class="meta" x-text="formatShortDate(entry.timestamp)"></span>
+                                                        </template>
+                                                        <template x-if="entry.kind === 'profile'">
+                                                            <button class="btn-icon" @click.stop="openProfileEditor(entry.profile)" title="Edit profile">✎</button>
+                                                        </template>
+                                                        <template x-if="entry.kind === 'resume'">
+                                                            <button class="btn-remove" @click.stop="removeCachedResume(entry.resume.checksum)" title="Remove">&times;</button>
+                                                        </template>
+                                                    </span>
+                                                </div>
+                                                <span class="meta" x-text="entry.meta"></span>
                                             </div>
-                                            <span class="meta" x-text="r.filename || 'pasted'"></span>
-                                        </div>
-                                    </template>
+                                        </template>
+                                    </div>
                                     <div style="font-size: 0.75rem; color: var(--text-secondary); margin: 6px 0 4px">Or add new:</div>
                                 </div>
                             </template>
@@ -76,6 +85,8 @@
                                         @click="resume.inputMode = 'upload'">Upload</button>
                                 <button class="tab" :class="resume.inputMode === 'paste' && 'active'"
                                         @click="resume.inputMode = 'paste'">Paste</button>
+                                <button class="tab" :class="resume.inputMode === 'profile' && 'active'"
+                                        @click="resume.inputMode = 'profile'; loadProfiles()">Profile</button>
                             </div>
 
                             <template x-if="resume.inputMode === 'upload'">
@@ -104,6 +115,166 @@
                                         <template x-if="resume.loading"><span class="spinner"></span></template>
                                         Submit
                                     </button>
+                                </div>
+                            </template>
+
+                            <!-- Profile tab -->
+                            <template x-if="resume.inputMode === 'profile'">
+                                <div>
+                                    <!-- Profile list -->
+                                    <div x-show="!profile.selected">
+                                        <div class="action-row" style="margin-bottom: 8px">
+                                            <button class="btn btn-ghost btn-sm" @click="loadProfiles">Refresh</button>
+                                            <button class="btn btn-secondary btn-sm" @click="profile.creating = !profile.creating">
+                                                + New Profile
+                                            </button>
+                                        </div>
+
+                                        <!-- Create profile form -->
+                                        <template x-if="profile.creating">
+                                            <div style="margin-bottom: 10px; padding: 8px; border: 1px solid var(--border); border-radius: 6px;">
+                                                <input type="text" x-model="profile.newName" placeholder="Profile name"
+                                                       style="margin-bottom: 6px" @keydown.enter="createProfile">
+                                                <textarea x-model="profile.newInstructions" placeholder="Instructions (optional)" rows="2"
+                                                          style="margin-bottom: 6px; font-size: 0.85rem"></textarea>
+                                                <div style="display: flex; gap: 6px">
+                                                    <button class="btn btn-secondary btn-sm" @click="createProfile"
+                                                            :disabled="!profile.newName.trim() || profile.loading">
+                                                        <template x-if="profile.loading"><span class="spinner"></span></template>
+                                                        Create
+                                                    </button>
+                                                    <button class="btn btn-ghost btn-sm" @click="profile.creating = false; profile.newName = ''; profile.newInstructions = ''">
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <div x-show="profile.loading && !profile.creating" style="color: var(--text-secondary); font-size: 0.85rem">
+                                            <span class="spinner"></span> Loading...
+                                        </div>
+                                        <div x-show="profile.error" class="field-error" x-text="profile.error" style="margin-bottom: 8px"></div>
+                                        <div x-show="profile.list.length === 0 && !profile.loading" class="empty-hint">
+                                            No profiles yet. Create one to get started.
+                                        </div>
+                                        <template x-for="p in profile.list" :key="p.id">
+                                            <div class="cached-resume-item" @click="selectProfile(p)">
+                                                <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px;">
+                                                    <span class="name" x-text="p.display_name || p.id"></span>
+                                                    <span class="resume-source-actions">
+                                                        <template x-if="profile.activatingId === p.id"><span class="meta">Loading…</span></template>
+                                                        <button class="btn-icon" @click.stop="openProfileEditor(p)" title="Edit profile">✎</button>
+                                                        <button class="btn-remove" @click.stop="deleteProfile(p.id)" title="Delete">&times;</button>
+                                                    </span>
+                                                </div>
+                                                <span class="meta" x-text="(p.document_count || 0) > 0 ? ((p.document_count || 0) + ' document(s) · click to use as resume') : 'No documents yet · click to edit'"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+
+                                    <!-- Selected profile detail -->
+                                    <div x-show="profile.selected">
+                                        <div class="action-row" style="margin-bottom: 8px">
+                                            <button class="btn btn-ghost btn-sm" @click="closeProfileEditor()">
+                                                ← Back
+                                            </button>
+                                            <span class="name" x-text="profile.selected && (profile.selected.display_name || profile.selected.id)"></span>
+                                        </div>
+
+                                        <!-- Upload document -->
+                                        <div class="file-drop file-drop-compact" style="margin-bottom: 8px"
+                                             :class="{'dragover': $el._dragover}"
+                                             @dragover.prevent="$el._dragover = true"
+                                             @dragleave="$el._dragover = false"
+                                             @drop.prevent="$el._dragover = false; uploadProfileDoc({target: {files: $event.dataTransfer.files}})">
+                                            <template x-if="!profile.uploading">
+                                                <div>
+                                                    <div>Add documents</div>
+                                                    <div class="file-hint">.tex .md .txt .pdf</div>
+                                                </div>
+                                            </template>
+                                            <template x-if="profile.uploading">
+                                                <div><span class="spinner"></span> <span x-text="profile.uploadProgress || 'Uploading...'"></span></div>
+                                            </template>
+                                            <input type="file" accept=".tex,.md,.txt,.pdf" multiple @change="uploadProfileDoc($event)">
+                                        </div>
+
+                                        <!-- Document list -->
+                                        <div class="profile-document-list">
+                                            <div x-show="profile.documents.length === 0 && !profile.uploading" class="empty-hint">
+                                                No documents. Upload one above.
+                                            </div>
+                                            <template x-for="doc in profile.documents" :key="doc.id">
+                                                <div class="cached-resume-item">
+                                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                                        <span class="name" x-text="doc.title"></span>
+                                                        <button class="btn-remove" @click.stop="deleteProfileDoc(doc.id)" title="Remove">&times;</button>
+                                                    </div>
+                                                    <div style="display: flex; gap: 8px; align-items: center;">
+                                                        <span class="meta" x-text="doc.kind"></span>
+                                                        <span class="meta"
+                                                              :style="doc.extraction_status === 'extracted' ? 'color: var(--success)' : (doc.extraction_status === 'error' ? 'color: var(--error)' : '')"
+                                                              x-text="doc.extraction_status || 'pending'"></span>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+
+                                        <!-- Extraction logs -->
+                                        <div x-show="profile.extractionLogs.length > 0" style="margin-top: 8px">
+                                            <div class="log-toggle" @click="profile.logsOpen = !profile.logsOpen">
+                                                <span x-text="(profile.logsOpen ? 'Hide' : 'Show') + ' extraction logs (' + profile.extractionLogs.length + ')'"></span>
+                                                <span class="chevron" :class="profile.logsOpen && 'open'"></span>
+                                            </div>
+                                            <div x-show="profile.logsOpen" class="log-panel" style="max-height: 120px">
+                                                <template x-for="(log, i) in profile.extractionLogs" :key="i">
+                                                    <div class="log-line">
+                                                        <span class="log-level" :class="'log-' + log.level.toLowerCase()"
+                                                              x-text="log.level.substring(0,4)"></span>
+                                                        <span class="log-msg" x-text="log.message"></span>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </div>
+
+                                        <!-- Add note -->
+                                        <div style="margin-top: 8px">
+                                            <button class="btn btn-ghost btn-sm" @click="profile.showNoteForm = !profile.showNoteForm">
+                                                <span x-text="profile.showNoteForm ? '× Cancel note' : '+ Add note'"></span>
+                                            </button>
+                                        </div>
+                                        <template x-if="profile.showNoteForm">
+                                            <div style="margin-top: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 6px;">
+                                                <input type="text" x-model="profile.noteTitle" placeholder="Note title"
+                                                       style="margin-bottom: 6px" @keydown.enter.prevent="$el.nextElementSibling.focus()">
+                                                <textarea x-model="profile.noteContent" placeholder="Note content..." rows="3"
+                                                          style="margin-bottom: 6px; font-size: 0.85rem"></textarea>
+                                                <button class="btn btn-secondary btn-sm"
+                                                        @click="addProfileNote"
+                                                        :disabled="!profile.noteTitle.trim() || profile.addingNote">
+                                                    <template x-if="profile.addingNote"><span class="spinner"></span></template>
+                                                    Add Note
+                                                </button>
+                                            </div>
+                                        </template>
+
+                                        <!-- Re-extract + Synthesize buttons -->
+                                        <div class="action-row" style="margin-top: 10px; gap: 6px">
+                                            <button class="btn btn-ghost btn-sm" style="flex: 0 0 auto"
+                                                    @click="reExtractProfile"
+                                                    :disabled="profile.documents.length === 0"
+                                                    title="Re-run extraction on all documents">
+                                                ↻ Re-extract
+                                            </button>
+                                            <button class="btn btn-primary" style="flex: 1"
+                                                    @click="synthesizeProfile"
+                                                    :disabled="profile.synthesizing || profile.documents.length === 0">
+                                                <template x-if="profile.synthesizing"><span class="spinner"></span></template>
+                                                Use as Resume
+                                            </button>
+                                        </div>
+                                        <div x-show="profile.error" class="field-error" x-text="profile.error"></div>
+                                    </div>
                                 </div>
                             </template>
                         </div>
@@ -220,14 +391,22 @@
                     <span x-text="optimization.statusMessage"></span>
                 </div>
 
+                <template x-if="usageStatusLines().length > 0">
+                    <div style="margin-top: 8px">
+                        <template x-for="(line, i) in usageStatusLines()" :key="i">
+                            <div class="sidebar-hint" x-text="line"></div>
+                        </template>
+                    </div>
+                </template>
+
                 <!-- Log panel -->
-                <div x-show="optimization.logs.length > 0" class="log-section">
+                <div x-show="visibleOptimizationLogs().length > 0" class="log-section">
                     <div class="log-toggle" @click="optimization.logsOpen = !optimization.logsOpen">
-                        <span x-text="(optimization.logsOpen ? 'Hide' : 'Show') + ' logs (' + optimization.logs.length + ')'"></span>
+                        <span x-text="(optimization.logsOpen ? 'Hide' : 'Show') + ' logs (' + visibleOptimizationLogs().length + ')'" ></span>
                         <span class="chevron" :class="optimization.logsOpen && 'open'"></span>
                     </div>
                     <div x-show="optimization.logsOpen" id="log-panel" class="log-panel">
-                        <template x-for="(log, i) in optimization.logs" :key="i">
+                        <template x-for="(log, i) in visibleOptimizationLogs()" :key="i">
                             <div class="log-line">
                                 <span class="log-level" :class="'log-' + log.level.toLowerCase()" x-text="({DEBUG:'DEBUG',INFO:'INFO ',WARNING:'WARN ',ERROR:'ERROR',CRITICAL:'CRIT '}[log.level] || log.level).substring(0,5)"></span>
                                 <span class="log-msg" x-text="log.message"></span>
@@ -361,6 +540,10 @@
                         <label for="opt-debug">Debug mode (save iterations)</label>
                     </div>
                     <div class="setting-row">
+                        <input type="checkbox" id="opt-intermediate" x-model="settings.showIntermediateLogs">
+                        <label for="opt-intermediate">Intermediate logs</label>
+                    </div>
+                    <div class="setting-row">
                         <input type="checkbox" id="opt-shame" x-model="settings.noShame">
                         <label for="opt-shame">No Shame mode</label>
                     </div>
@@ -374,18 +557,130 @@
                     <span class="chevron" :class="drawerSections.models && 'open'"></span>
                 </div>
                 <div class="sidebar-section-body" x-show="drawerSections.models">
-                    <div class="setting-field">
-                        <label for="opt-pro-model">Pro model</label>
-                        <input type="text" id="opt-pro-model" x-model="settings.proModel">
+                    <!-- Provider -->
+                    <div class="tabs" style="margin-bottom: 8px">
+                        <template x-for="scope in providerScopes()" :key="scope">
+                            <button class="tab"
+                                    :class="provider.activeScope === scope && 'active'"
+                                    @click="setProviderScope(scope)"
+                                    x-text="providerTabLabel(scope)"></button>
+                        </template>
                     </div>
                     <div class="setting-field">
-                        <label for="opt-flash-model">Flash model</label>
-                        <input type="text" id="opt-flash-model" x-model="settings.flashModel">
+                        <label for="opt-provider">Provider</label>
+                        <select id="opt-provider" :value="providerSelected()" @change="handleProviderSelectionChange($event.target.value)">
+                            <option value="gemini">Gemini</option>
+                            <option value="openrouter">OpenRouter</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="anthropic">Anthropic</option>
+                            <option value="moonshot">Moonshot AI</option>
+                            <option value="custom">Custom (OpenAI-compatible)</option>
+                        </select>
                     </div>
-                    <div class="setting-field">
-                        <label for="opt-embed-model">Embedding model</label>
-                        <input type="text" id="opt-embed-model" x-model="settings.embeddingModel">
+
+                    <!-- Base URL (custom only) -->
+                    <template x-if="providerSelected() === 'custom'">
+                        <div class="setting-field">
+                            <label for="opt-base-url">Base URL</label>
+                            <input type="text" id="opt-base-url" :value="providerBaseUrl()"
+                                   @input="handleProviderBaseUrlInput($event.target.value)"
+                                   placeholder="https://api.openai.com/v1">
+                        </div>
+                    </template>
+
+                    <!-- Connection status + reload -->
+                    <div class="connection-status">
+                        <span class="status-dot" :class="providerRuntime().status"></span>
+                        <span x-show="providerRuntime().checking" class="spinner" style="width:10px;height:10px;border-width:1.5px;flex-shrink:0"></span>
+                        <span x-text="providerRuntime().message" style="flex:1;font-size:0.78rem"></span>
+                        <button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:0.75rem" @click="checkProvider()" :disabled="providerRuntime().checking">↻</button>
                     </div>
+                    <div class="sidebar-hint" style="margin-top:2px">
+                        <span x-text="providerScopeSummary()"></span>
+                        <button x-show="canResetProviderOverride()" class="btn btn-ghost btn-sm" style="margin-left:6px;padding:1px 6px;font-size:0.72rem" @click="resetProviderOverride()">Use Pro provider</button>
+                    </div>
+                    <div class="sidebar-hint" x-show="providerRuntime().detail" x-text="providerRuntime().detail" style="margin-top:2px;word-break:break-word"></div>
+                    <div class="sidebar-hint" style="margin-top:2px">API key set in the <strong>API Keys</strong> section below</div>
+
+                    <!-- Pro model (combobox) -->
+                    <div class="setting-field" x-data="{ open: false, q: '' }">
+                        <label>Pro model</label>
+                        <div class="combobox">
+                            <input type="text"
+                                   :value="open ? q : settings.proModel"
+                                   @focus="q = settings.proModel; open = true"
+                                   @input="q = $event.target.value; open = true"
+                                   @keydown.enter.prevent="settings.proModel = q; open = false; $event.target.blur()"
+                                   @keydown.escape="open = false; $event.target.blur()"
+                                   @blur="setTimeout(() => { if (!settings.proModel && q) settings.proModel = q; open = false }, 150)"
+                                   placeholder="Type or select model...">
+                            <div class="combobox-list" x-show="open && providerChatModels('pro').length > 0">
+                                <template x-for="m in providerChatModels('pro').filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
+                                    <div class="combobox-option"
+                                         @mousedown.prevent="settings.proModel = m.value; q = m.value; open = false"
+                                         x-text="m.label"></div>
+                                </template>
+                                <div class="combobox-empty"
+                                     x-show="q && providerChatModels('pro').filter(m => m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase())).length === 0">
+                                    No matches — press Enter to use custom value
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Flash model (combobox) -->
+                    <div class="setting-field" x-data="{ open: false, q: '' }">
+                        <label>Flash model</label>
+                        <div class="combobox">
+                            <input type="text"
+                                   :value="open ? q : settings.flashModel"
+                                   @focus="q = settings.flashModel; open = true"
+                                   @input="q = $event.target.value; open = true"
+                                   @keydown.enter.prevent="settings.flashModel = q; open = false; $event.target.blur()"
+                                   @keydown.escape="open = false; $event.target.blur()"
+                                   @blur="setTimeout(() => { if (!settings.flashModel && q) settings.flashModel = q; open = false }, 150)"
+                                   placeholder="Type or select model...">
+                            <div class="combobox-list" x-show="open && providerChatModels('flash').length > 0">
+                                <template x-for="m in providerChatModels('flash').filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
+                                    <div class="combobox-option"
+                                         @mousedown.prevent="settings.flashModel = m.value; q = m.value; open = false"
+                                         x-text="m.label"></div>
+                                </template>
+                                <div class="combobox-empty"
+                                     x-show="q && providerChatModels('flash').filter(m => m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase())).length === 0">
+                                    No matches — press Enter to use custom value
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Embedding model (combobox) -->
+                    <div class="setting-field" x-data="{ open: false, q: '' }">
+                        <label>Embedding model</label>
+                        <div class="combobox">
+                            <input type="text"
+                                   :value="open ? q : settings.embeddingModel"
+                                   @focus="q = settings.embeddingModel; open = true"
+                                   @input="q = $event.target.value; open = true"
+                                   @keydown.enter.prevent="settings.embeddingModel = q; open = false; $event.target.blur()"
+                                   @keydown.escape="open = false; $event.target.blur()"
+                                   @blur="setTimeout(() => { if (!settings.embeddingModel && q) settings.embeddingModel = q; open = false }, 150)"
+                                   placeholder="Type or select model...">
+                            <div class="combobox-list" x-show="open && providerEmbeddingModels('embedding').length > 0">
+                                <template x-for="m in providerEmbeddingModels('embedding').filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
+                                    <div class="combobox-option"
+                                         @mousedown.prevent="settings.embeddingModel = m.value; q = m.value; open = false"
+                                         x-text="m.label"></div>
+                                </template>
+                                <div class="combobox-empty"
+                                     x-show="q && providerEmbeddingModels('embedding').filter(m => m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase())).length === 0">
+                                    No matches — press Enter to use custom value
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Reasoning effort -->
                     <div class="setting-field">
                         <label for="opt-reasoning">Reasoning effort</label>
                         <select id="opt-reasoning" x-model="settings.reasoningEffort">
@@ -412,10 +707,14 @@
                             <label x-text="label"></label>
                             <div class="key-input-row">
                                 <input type="password" x-model="settings.apiKeys[key]"
+                                       @input="_debounceCheckProvider()"
+                                       @keydown.enter="checkProvider()"
                                        :placeholder="appSettings.apiKeysSet[key] ? '(set in .env)' : '(not set)'">
                                 <span class="key-status"
                                       :class="(settings.apiKeys[key] || appSettings.apiKeysSet[key]) ? 'key-set' : 'key-unset'"
-                                      x-text="(settings.apiKeys[key] || appSettings.apiKeysSet[key]) ? 'SET' : '-'"></span>
+                                      x-text="(settings.apiKeys[key] || appSettings.apiKeysSet[key]) ? '✓' : ''"></span>
+                                <button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:0.8rem;flex-shrink:0"
+                                        @click="checkProvider()" :disabled="providerRuntime().checking" title="Check connection">↻</button>
                             </div>
                         </div>
                     </template>

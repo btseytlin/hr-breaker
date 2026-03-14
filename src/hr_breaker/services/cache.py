@@ -47,7 +47,7 @@ class ResumeCache:
 
     def list_all(self) -> list[ResumeSource]:
         resumes = []
-        paths = sorted(self.cache_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        paths = sorted(self.cache_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         for path in paths:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -100,7 +100,7 @@ class JobCache:
 
     def list_all(self) -> list[dict]:
         jobs = []
-        paths = sorted(self.cache_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        paths = sorted(self.cache_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         for path in paths:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))

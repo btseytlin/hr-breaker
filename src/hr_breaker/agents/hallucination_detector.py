@@ -6,7 +6,7 @@ from pydantic_ai import Agent
 from hr_breaker.config import get_model_settings, get_pro_model
 from hr_breaker.models import FilterResult, OptimizedResume, ResumeSource
 from hr_breaker.models.language import Language
-from hr_breaker.utils.retry import run_with_retry
+from hr_breaker.utils.optimization_telemetry import run_tracked_agent
 
 
 class HallucinationResult(BaseModel):
@@ -153,14 +153,15 @@ List any concerns but remember: light assumptions about related technologies are
 
     threshold = 0.6 if no_shame else 0.9
     agent = get_hallucination_agent(no_shame=no_shame)
-    result = await run_with_retry(agent.run, prompt)
+    result = await run_tracked_agent(agent, prompt, component="HallucinationChecker")
+
     r = result.output
 
     issues = []
     suggestions = []
 
     if r.concerns:
-        issues.append(f"Concerns: {', '.join(r.concerns)}")
+        issues.extend(r.concerns)
     if r.no_hallucination_score < threshold:
         suggestions.append(
             f"Score {r.no_hallucination_score:.2f} below {threshold} threshold. {r.reasoning}"

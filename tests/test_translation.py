@@ -91,6 +91,8 @@ def source_resume():
     return ResumeSource(content="John Doe\nPython developer with 5 years experience")
 
 
+
+
 # ── Orchestration optimize_for_job translation integration ────────────────────
 
 
@@ -234,4 +236,4 @@ class TestTranslationConfig:
     def test_default_language_setting(self):
         from hr_breaker.config import Settings
         s = Settings()
-        assert s.default_language == "from_job"
+        assert s.default_language == "en"
