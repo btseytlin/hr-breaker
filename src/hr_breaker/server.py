@@ -24,7 +24,8 @@ from hr_breaker.models import (
     LANGUAGE_MODES,
     get_language_safe,
     resolve_target_language,
-)
+ )
+from hr_breaker.models.profile import ProfileDocument
 from hr_breaker.orchestration import optimize_for_job
 from hr_breaker.services import (
     PDFStorage,
@@ -129,6 +130,7 @@ class ProfileActionRequest(LLMOverrideRequest):
 
 class SynthesizeProfileRequest(ProfileActionRequest):
     job_text: str | None = None
+    selected_doc_ids: list[str] | None = None
 
 
 class AddNoteRequest(BaseModel):
@@ -387,6 +389,7 @@ async def get_profile(profile_id: str):
             "id": d.id,
             "title": d.title,
             "kind": d.kind,
+            "included_by_default": d.included_by_default,
             "extraction_status": d.metadata.get("extraction_status", "pending"),
         }
         for d in documents
@@ -434,10 +437,12 @@ async def add_profile_document(
 @app.delete("/api/profile/{profile_id}/document/{doc_id}")
 async def delete_profile_document(profile_id: str, doc_id: str):
     from hr_breaker.services.profile_store import ProfileStore
+    from hr_breaker.services.extraction_worker import extraction_worker
     store = ProfileStore()
     doc = store.get_document(profile_id, doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    extraction_worker.cancel([doc_id])
     store.remove_document(profile_id, doc_id)
     return {"ok": True}
 
@@ -483,11 +488,7 @@ async def re_extract_profile(profile_id: str, req: ProfileActionRequest | None =
     documents = store.list_documents(profile_id)
     doc_ids = [d.id for d in documents]
     overrides = _build_overrides(req or ProfileActionRequest())
-    # Reset statuses so they get re-submitted even if previously done/error
-    with extraction_worker._lock:
-        for doc_id in doc_ids:
-            extraction_worker._status.pop(doc_id, None)
-    extraction_worker.submit(profile_id, doc_ids, overrides=overrides or None)
+    extraction_worker.resubmit(profile_id, doc_ids, overrides=overrides or None)
     return {"submitted": len(doc_ids)}
 
 
@@ -505,9 +506,14 @@ async def synthesize_profile(profile_id: str, req: SynthesizeProfileRequest):
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    documents = store.list_documents(profile_id)
-    if not documents:
+    all_documents = store.list_documents(profile_id)
+    if not all_documents:
         return JSONResponse(status_code=400, content={"error": "Profile has no documents"})
+
+    try:
+        documents = _resolve_synthesis_documents(all_documents, req.selected_doc_ids)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
 
     overrides = _build_overrides(req)
     try:
@@ -713,6 +719,30 @@ def _broadcast(msg: str | None) -> None:
         return
     for sub_queue in _active_optimization.get("subscribers", []):
         sub_queue.put_nowait(msg)
+
+
+def _default_synthesis_documents(documents: list[ProfileDocument]) -> list[ProfileDocument]:
+    selected = [document for document in documents if document.included_by_default]
+    return selected or documents
+
+
+def _resolve_synthesis_documents(
+    documents: list[ProfileDocument],
+    selected_doc_ids: list[str] | None,
+ ) -> list[ProfileDocument]:
+    if selected_doc_ids is None:
+        return _default_synthesis_documents(documents)
+
+    requested_ids = list(dict.fromkeys(selected_doc_ids))
+    if not requested_ids:
+        raise ValueError("Select at least one document for synthesis")
+
+    documents_by_id = {document.id: document for document in documents}
+    unknown_ids = [doc_id for doc_id in requested_ids if doc_id not in documents_by_id]
+    if unknown_ids:
+        raise ValueError("Unknown profile documents in synthesis scope")
+
+    return [documents_by_id[doc_id] for doc_id in requested_ids]
 
 
 def _build_overrides(req: BaseModel | None) -> dict:

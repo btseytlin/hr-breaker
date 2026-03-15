@@ -250,14 +250,14 @@ class ProfileStore:
         except Exception:
             new_meta = {**doc.metadata, "extraction_status": "failed"}
             failed = doc.model_copy(update={"metadata": new_meta})
-            self._document_path(profile_id, document_id).write_text(
-                failed.model_dump_json(indent=2), encoding="utf-8"
-            )
+            if not self._write_document_if_present(profile_id, document_id, failed):
+                logger.info("Skipping failed extraction persistence for deleted document %s", document_id)
+                return None
             raise
         updated = doc.model_copy(update={"metadata": new_meta})
-        self._document_path(profile_id, document_id).write_text(
-            updated.model_dump_json(indent=2), encoding="utf-8"
-        )
+        if not self._write_document_if_present(profile_id, document_id, updated):
+            logger.info("Skipping extraction persistence for deleted document %s", document_id)
+            return None
         return updated
 
     def remove_document(self, profile_id: str, document_id: str) -> None:
@@ -270,6 +270,24 @@ class ProfileStore:
         profile = self.get_profile(profile_id)
         if profile is not None:
             self.save_profile(profile)
+
+    def _write_document_if_present(
+        self,
+        profile_id: str,
+        document_id: str,
+        document: ProfileDocument,
+    ) -> bool:
+        path = self._document_path(profile_id, document_id)
+        payload = document.model_dump_json(indent=2)
+        try:
+            with path.open("r+", encoding="utf-8") as handle:
+                handle.seek(0)
+                handle.write(payload)
+                handle.truncate()
+        except FileNotFoundError:
+            return False
+        return True
+
 
     def _find_duplicate_document(
         self,

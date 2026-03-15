@@ -292,7 +292,7 @@ async def test_re_extract_profile_forwards_llm_overrides(client, monkeypatch, tm
         profile = store.create_profile("Candidate")
         doc = store.add_note(profile.id, title="Resume", content_text="resume text")
 
-        with patch("hr_breaker.services.extraction_worker.extraction_worker.submit") as mock_submit:
+        with patch("hr_breaker.services.extraction_worker.extraction_worker.resubmit") as mock_resubmit:
             resp = await client.post(
                 f"/api/profile/{profile.id}/extract",
                 json={
@@ -310,7 +310,7 @@ async def test_re_extract_profile_forwards_llm_overrides(client, monkeypatch, tm
 
         assert resp.status_code == 200
         assert resp.json() == {"submitted": 1}
-        mock_submit.assert_called_once_with(
+        mock_resubmit.assert_called_once_with(
             profile.id,
             [doc.id],
             overrides={
@@ -325,6 +325,26 @@ async def test_re_extract_profile_forwards_llm_overrides(client, monkeypatch, tm
 
 
 @pytest.mark.asyncio
+async def test_delete_profile_document_cancels_worker_before_removal(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PROFILE_DIR", str(tmp_path))
+    config_module.clear_settings_cache()
+    try:
+        store = ProfileStore()
+        profile = store.create_profile("Candidate")
+        doc = store.add_note(profile.id, title="Resume", content_text="resume text")
+
+        with patch("hr_breaker.services.extraction_worker.extraction_worker.cancel") as mock_cancel:
+            resp = await client.delete(f"/api/profile/{profile.id}/document/{doc.id}")
+
+        assert resp.status_code == 200
+        mock_cancel.assert_called_once_with([doc.id])
+        assert store.get_document(profile.id, doc.id) is None
+    finally:
+        config_module.clear_settings_cache()
+
+
+
+@pytest.mark.asyncio
 async def test_synthesize_profile_applies_llm_overrides(client, monkeypatch, tmp_path):
     monkeypatch.setenv("PROFILE_DIR", str(tmp_path))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -333,9 +353,16 @@ async def test_synthesize_profile_applies_llm_overrides(client, monkeypatch, tmp
     try:
         store = ProfileStore()
         profile = store.create_profile("Candidate")
-        store.add_note(profile.id, title="Resume", content_text="resume text")
+        included_doc = store.add_note(profile.id, title="Resume", content_text="resume text")
+        skipped_doc = store.add_note(
+            profile.id,
+            title="Archive",
+            content_text="archived text",
+            included_by_default=False,
+        )
 
         async def fake_rank_profile_documents(documents, job):
+            assert [document.id for document in documents] == [included_doc.id]
             assert os.environ.get("OPENAI_API_KEY") == "sk-test"
             assert os.environ.get("EMBEDDING_OPENAI_API_BASE") == "https://example.test/v1"
             assert os.environ.get("OPENAI_API_BASE") is None
@@ -352,6 +379,7 @@ async def test_synthesize_profile_applies_llm_overrides(client, monkeypatch, tmp
                 f"/api/profile/{profile.id}/synthesize",
                 json={
                     "job_text": "Product manager role",
+                    "selected_doc_ids": [included_doc.id],
                     "embedding_model": "openai/text-embedding-3-small",
                     "api_keys": {"openai": "sk-test"},
                     "providers": {
@@ -366,6 +394,31 @@ async def test_synthesize_profile_applies_llm_overrides(client, monkeypatch, tmp
         assert resp.status_code == 200
         assert resp.json()["first_name"] == "Jane"
         assert resp.json()["last_name"] == "Doe"
+        assert skipped_doc.id != included_doc.id
+    finally:
+        config_module.clear_settings_cache()
+
+
+
+@pytest.mark.asyncio
+async def test_synthesize_profile_rejects_unknown_selected_doc_ids(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PROFILE_DIR", str(tmp_path))
+    config_module.clear_settings_cache()
+    try:
+        store = ProfileStore()
+        profile = store.create_profile("Candidate")
+        store.add_note(profile.id, title="Resume", content_text="resume text")
+
+        resp = await client.post(
+            f"/api/profile/{profile.id}/synthesize",
+            json={
+                "job_text": "Product manager role",
+                "selected_doc_ids": ["missing-doc"],
+            },
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "Unknown profile documents in synthesis scope"
     finally:
         config_module.clear_settings_cache()
 

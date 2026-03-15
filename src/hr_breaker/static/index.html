@@ -204,10 +204,19 @@
                                             <div x-show="profile.documents.length === 0 && !profile.uploading" class="empty-hint">
                                                 No documents. Upload one above.
                                             </div>
+                                            <div x-show="profile.documents.length > 0" class="meta" style="margin-bottom: 6px">
+                                                <span x-text="selectedProfileDocumentCount() + ' selected for synthesis'"></span>
+                                            </div>
                                             <template x-for="doc in profile.documents" :key="doc.id">
                                                 <div class="cached-resume-item">
-                                                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                                                        <span class="name" x-text="doc.title"></span>
+                                                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+                                                        <label style="display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; cursor: pointer;">
+                                                            <input type="checkbox"
+                                                                   :checked="isProfileDocSelected(doc.id)"
+                                                                   @click.stop
+                                                                   @change="setProfileDocSelected(doc.id, $event.target.checked)">
+                                                            <span class="name" x-text="doc.title"></span>
+                                                        </label>
                                                         <button class="btn-remove" @click.stop="deleteProfileDoc(doc.id)" title="Remove">&times;</button>
                                                     </div>
                                                     <div style="display: flex; gap: 8px; align-items: center;">
@@ -268,7 +277,7 @@
                                             </button>
                                             <button class="btn btn-primary" style="flex: 1"
                                                     @click="synthesizeProfile"
-                                                    :disabled="profile.synthesizing || profile.documents.length === 0">
+                                                    :disabled="profile.synthesizing || selectedProfileDocumentCount() === 0">
                                                 <template x-if="profile.synthesizing"><span class="spinner"></span></template>
                                                 Use as Resume
                                             </button>

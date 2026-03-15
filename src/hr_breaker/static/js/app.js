@@ -78,6 +78,8 @@ document.addEventListener('alpine:init', () => {
             list: [],
             selected: null,
             documents: [],
+            selectedDocIds: [],
+            selectionCustomized: false,
             loading: false,
             uploading: false,
             synthesizing: false,
@@ -1290,6 +1292,8 @@ document.addEventListener('alpine:init', () => {
         async openProfileEditor(p) {
             this.profile.selected = p;
             this.profile.documents = [];
+            this.profile.selectedDocIds = [];
+            this.profile.selectionCustomized = false;
             this.profile.extractionLogs = [];
             this.profile.error = null;
             await this._refreshProfileDocs(p.id);
@@ -1300,10 +1304,37 @@ document.addEventListener('alpine:init', () => {
             this._stopExtractionPoll();
             this.profile.selected = null;
             this.profile.documents = [];
+            this.profile.selectedDocIds = [];
+            this.profile.selectionCustomized = false;
             this.profile.extractionLogs = [];
             this.profile.showNoteForm = false;
             this.profile.error = null;
         },
+
+        _defaultSelectedProfileDocIds(documents = this.profile.documents) {
+            const preferred = (documents || []).filter((doc) => doc.included_by_default).map((doc) => doc.id);
+            if (preferred.length) return preferred;
+            return (documents || []).map((doc) => doc.id);
+        },
+
+        selectedProfileDocumentCount() {
+            return (this.profile.selectedDocIds || []).length;
+        },
+
+        isProfileDocSelected(docId) {
+            return (this.profile.selectedDocIds || []).includes(docId);
+        },
+
+        setProfileDocSelected(docId, selected) {
+            const current = new Set(this.profile.selectedDocIds || []);
+            if (selected) current.add(docId);
+            else current.delete(docId);
+            this.profile.selectedDocIds = this.profile.documents
+                .map((doc) => doc.id)
+                .filter((id) => current.has(id));
+            this.profile.selectionCustomized = true;
+        },
+
 
         _updateProfileSummary(pid, updates) {
             this.profile.list = this.profile.list.map((profile) => profile.id === pid ? { ...profile, ...updates } : profile);
@@ -1317,10 +1348,17 @@ document.addEventListener('alpine:init', () => {
                 const resp = await fetch('/api/profile/' + pid);
                 if (!resp.ok) return;
                 const data = await resp.json();
-                this.profile.documents = data.documents || [];
+                const documents = data.documents || [];
+                this.profile.documents = documents;
+                if (this.profile.selectionCustomized) {
+                    const currentIds = new Set(documents.map((doc) => doc.id));
+                    this.profile.selectedDocIds = (this.profile.selectedDocIds || []).filter((id) => currentIds.has(id));
+                } else {
+                    this.profile.selectedDocIds = this._defaultSelectedProfileDocIds(documents);
+                }
                 this._updateProfileSummary(pid, {
                     display_name: data.name || this.profile.selected?.display_name,
-                    document_count: (data.documents || []).length,
+                    document_count: documents.length,
                 });
             } catch (e) {
                 console.error('Failed to load profile docs:', e);
@@ -1405,6 +1443,7 @@ document.addEventListener('alpine:init', () => {
             if (!this.profile.selected) return;
             await fetch('/api/profile/' + this.profile.selected.id + '/document/' + docId, { method: 'DELETE' });
             this.profile.documents = this.profile.documents.filter(d => d.id !== docId);
+            this.profile.selectedDocIds = (this.profile.selectedDocIds || []).filter((id) => id !== docId);
             this._updateProfileSummary(this.profile.selected.id, { document_count: this.profile.documents.length });
         },
 
@@ -1460,6 +1499,7 @@ document.addEventListener('alpine:init', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     job_text: this.job.text || null,
+                    selected_doc_ids: this.profile.selectedDocIds || [],
                     ...this._profileRunOverrides(),
                 }),
             });

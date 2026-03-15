@@ -1,3 +1,8 @@
+from unittest.mock import patch
+
+import pytest
+
+from hr_breaker.models.profile import DocumentExtraction
 from hr_breaker.services.profile_store import ProfileStore
 
 
@@ -60,3 +65,20 @@ def test_profile_store_deduplicates_matching_uploads_and_updates_timestamp(tmp_p
     assert len(documents) == 2
     assert {document.kind for document in documents} == {"resume", "note"}
     assert note.source_name == "Hackathon"
+
+
+@pytest.mark.asyncio
+async def test_extract_document_content_does_not_recreate_deleted_document(tmp_path):
+    store = ProfileStore(root_dir=tmp_path)
+    profile = store.create_profile("Jane Doe")
+    doc = store.add_note(profile.id, title="Resume", content_text="raw text")
+
+    async def fake_extract_document(_content):
+        store.remove_document(profile.id, doc.id)
+        return DocumentExtraction(summary=["Recovered facts"])
+
+    with patch("hr_breaker.agents.extractor.extract_document", new=fake_extract_document):
+        updated = await store.extract_document_content(profile.id, doc.id)
+
+    assert updated is None
+    assert store.get_document(profile.id, doc.id) is None
