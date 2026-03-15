@@ -206,6 +206,10 @@ label {
     transition: border-color 0.15s;
     position: relative;
 }
+.file-drop.file-drop-compact {
+    padding: 10px 16px;
+}
+
 .file-drop:hover, .file-drop.dragover {
     border-color: var(--accent);
 }
@@ -302,6 +306,14 @@ label {
 
 /* --- Cached resume picker --- */
 .cached-resumes { margin-bottom: 8px; }
+.resume-source-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 176px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
 .cached-resume-item {
     display: flex;
     flex-direction: column;
@@ -317,6 +329,13 @@ label {
 .cached-resume-item:hover { background: var(--surface-hover); }
 .cached-resume-item .name { font-size: 0.85rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .cached-resume-item .meta { font-size: 0.7rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resume-source-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+.btn-icon,
 .btn-remove {
     background: none;
     border: none;
@@ -326,6 +345,7 @@ label {
     line-height: 1;
     padding: 0 2px;
 }
+.btn-icon:hover { color: var(--text); }
 .btn-remove:hover { color: var(--error); }
 
 /* --- Progress/results --- */
@@ -416,9 +436,31 @@ label {
 /* --- API key input row --- */
 .key-input-row { display: flex; gap: 8px; align-items: center; }
 .key-input-row input { flex: 1; }
-.key-status { font-size: 0.7rem; font-weight: 600; min-width: 28px; text-align: center; }
+.key-status { font-size: 1rem; min-width: 16px; text-align: center; }
 .key-set { color: var(--success); }
 .key-unset { color: var(--text-secondary); }
+
+/* --- Connection status --- */
+.connection-status { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; margin: 6px 0; color: var(--text-secondary); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.status-dot.unknown { background: var(--text-secondary); }
+.status-dot.warning { background: var(--warning); }
+.status-dot.connected { background: var(--success); }
+
+/* --- Combobox --- */
+.combobox { position: relative; }
+.combobox-list {
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 20;
+    max-height: 200px; overflow-y: auto;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 0 0 6px 6px;
+    border-top: none;
+}
+.combobox-option {
+    padding: 6px 12px; cursor: pointer; font-size: 0.85rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.combobox-option:hover { background: var(--surface-hover); }
+.combobox-empty { padding: 6px 12px; font-size: 0.8rem; color: var(--text-secondary); }
 
 /* --- Threshold slider --- */
 .threshold-row { display: flex; align-items: center; gap: 8px; }
@@ -477,6 +519,15 @@ label {
     user-select: none;
 }
 .log-toggle:hover { color: var(--text); }
+
+.profile-document-list {
+    max-height: 216px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+.profile-document-list .cached-resume-item {
+    flex: 0 0 auto;
+}
 
 .log-panel {
     margin-top: 6px;

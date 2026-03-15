@@ -8,7 +8,7 @@ from hr_breaker.models.language import Language
 
 @FilterRegistry.register
 class TranslationQualityChecker(BaseFilter):
-    """Evaluate translation quality for non-English resumes. Skipped for English."""
+    """Evaluate translation quality for non-English resumes. Skipped when no translation needed."""
 
     name = "TranslationQualityChecker"
     priority = 8  # Run last — no point checking translation if content fails

@@ -1,4 +1,5 @@
 import hashlib
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -6,6 +7,19 @@ from typing import Any
 from pydantic import BaseModel, Field, computed_field, model_validator
 
 from hr_breaker.models.resume_data import ResumeData
+
+
+_PROFILE_HEADER_RE = re.compile(r"^Profile:\s*(.+)$", re.MULTILINE)
+
+
+def _legacy_profile_name(content: Any) -> str | None:
+    if not isinstance(content, str):
+        return None
+    match = _PROFILE_HEADER_RE.search(content)
+    if match is None:
+        return None
+    profile_name = match.group(1).strip()
+    return profile_name or None
 
 
 class ResumeSource(BaseModel):
@@ -17,6 +31,9 @@ class ResumeSource(BaseModel):
     last_name: str | None = None
     language_code: str = "en"
     filename: str | None = None  # Original upload filename
+    source_type: str | None = None  # upload | paste | profile
+    source_profile_id: str | None = None
+    source_profile_name: str | None = None
     instructions: str | None = None
 
     @model_validator(mode="before")
@@ -30,6 +47,12 @@ class ResumeSource(BaseModel):
                 data["instructions"] = data.pop("notes")
             if "language_code" not in data:
                 data["language_code"] = "en"
+            legacy_profile_name = _legacy_profile_name(data.get("content"))
+            if legacy_profile_name is not None:
+                data.setdefault("source_type", "profile")
+                data.setdefault("source_profile_name", legacy_profile_name)
+            # Drop removed field from old cache files
+            data.pop("contact_info", None)
         return data
 
     # Legacy alias for backward compatibility

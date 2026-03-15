@@ -29,9 +29,11 @@ wheels/
 venv/
 ENV/
 
-# Environment variables
+# Environment variables and local secrets
 .env
-
+.env.*
+!.env.example
+.streamlit/secrets.toml
 # Cache
 .cache/
 
@@ -49,3 +51,4 @@ output/
 Thumbs.db
 
 
+omp-session-*.html

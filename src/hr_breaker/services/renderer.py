@@ -45,8 +45,8 @@ class BaseRenderer(ABC):
     """Abstract base class for resume renderers."""
 
     @abstractmethod
-    def render(self, data: ResumeData) -> RenderResult:
-        """Render resume data to PDF."""
+    def render(self, html_body: str) -> RenderResult:
+        """Render resume HTML body to PDF."""
         pass
 
 
@@ -107,19 +107,17 @@ class HTMLRenderer(BaseRenderer):
             raise
 
     def render(self, html_body: str) -> RenderResult:
-        """Render LLM-generated HTML body to PDF.
-
-        Args:
-            html_body: HTML content for the <body> (no wrapper needed)
-        """
+        """Render LLM-generated HTML body to PDF."""
         from weasyprint import HTML
 
-        # Wrap LLM's body content with our template
-        html_content = self._wrapper_html.replace("{{BODY}}", html_body)
+        html_content = (
+            self._wrapper_html
+            .replace("{{HEADER}}", "")
+            .replace("{{BODY}}", html_body)
+        )
 
-        # Render with WeasyPrint
-        html = HTML(string=html_content, base_url=str(TEMPLATE_DIR))
-        doc = html.render(font_config=self.font_config)
+        html_doc = HTML(string=html_content, base_url=str(TEMPLATE_DIR))
+        doc = html_doc.render(font_config=self.font_config)
         pdf_bytes = doc.write_pdf()
         page_count = len(doc.pages)
 
@@ -140,13 +138,13 @@ class HTMLRenderer(BaseRenderer):
         template = self.env.get_template("resume.html")
         html_content = template.render(resume=data)
 
-        html = HTML(string=html_content, base_url=str(TEMPLATE_DIR))
+        html_doc = HTML(string=html_content, base_url=str(TEMPLATE_DIR))
         css_path = TEMPLATE_DIR / "resume.css"
         stylesheets = []
         if css_path.exists():
             stylesheets.append(CSS(filename=str(css_path), font_config=self.font_config))
 
-        doc = html.render(stylesheets=stylesheets, font_config=self.font_config)
+        doc = html_doc.render(stylesheets=stylesheets, font_config=self.font_config)
         pdf_bytes = doc.write_pdf()
         page_count = len(doc.pages)
 

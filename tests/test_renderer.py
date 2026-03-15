@@ -1,7 +1,7 @@
 """Tests for the renderer module."""
 
+import fitz
 import pytest
-
 from hr_breaker.models.resume_data import (
     ResumeData,
     RenderResult,
@@ -230,6 +230,7 @@ class TestHTMLRenderer:
         result = renderer.render_data(full_resume_data)
         # Just verify it renders - URL handling is in template
         assert len(result.pdf_bytes) > 0
+
 
 
 # --- Integration Tests ---
