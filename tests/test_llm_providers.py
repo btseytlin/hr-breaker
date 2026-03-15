@@ -197,3 +197,31 @@ async def test_fetch_provider_catalog_uses_moonshot_openai_compatible_endpoint()
 
 def test_litellm_prefix_supports_moonshot():
     assert _litellm_prefix("moonshot") == "moonshot/"
+
+@pytest.mark.asyncio
+async def test_fetch_anthropic_models_avoids_double_v1_suffix():
+    recorded = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": []}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, headers=None):
+            recorded["url"] = url
+            recorded["headers"] = headers
+            return FakeResponse()
+
+    with patch("hr_breaker.services.llm_providers.httpx.AsyncClient", return_value=FakeClient()):
+        await _fetch_anthropic_models("ant-test", "https://api.anthropic.com/v1/")
+
+    assert recorded["url"] == "https://api.anthropic.com/v1/models"

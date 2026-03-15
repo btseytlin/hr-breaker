@@ -123,10 +123,17 @@ async def _fetch_gemini_models(api_key: str) -> tuple[list[dict], list[dict]]:
 
     return _dedup_sort(chat), _dedup_sort(embed)
 
+def _anthropic_models_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/v1"):
+        return f"{normalized}/models"
+    return f"{normalized}/v1/models"
+
+
 async def _fetch_anthropic_models(api_key: str, base_url: str) -> tuple[list[dict], list[dict]]:
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         resp = await client.get(
-            f"{base_url.rstrip('/')}/v1/models",
+            _anthropic_models_url(base_url),
             headers={
                 "x-api-key": api_key,
                 "anthropic-version": "2023-06-01",

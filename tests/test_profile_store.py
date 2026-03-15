@@ -82,3 +82,18 @@ async def test_extract_document_content_does_not_recreate_deleted_document(tmp_p
 
     assert updated is None
     assert store.get_document(profile.id, doc.id) is None
+
+def test_profile_store_rejects_path_traversal_ids(tmp_path):
+    store = ProfileStore(root_dir=tmp_path / "profiles")
+    outside_dir = tmp_path / "outside-profile"
+    outside_dir.mkdir(parents=True)
+    (outside_dir / "profile.json").write_text("{}", encoding="utf-8")
+
+    assert store.get_profile("../outside-profile") is None
+    assert store.list_documents("../outside-profile") == []
+    assert store.get_document("../outside-profile", "doc") is None
+
+    with pytest.raises(ValueError):
+        store.delete_profile("../outside-profile")
+
+    assert (outside_dir / "profile.json").exists()

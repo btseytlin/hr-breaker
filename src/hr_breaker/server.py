@@ -189,10 +189,12 @@ async def upload_resume(
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": f"Failed to read file: {e}"})
 
-    req = _request_from_form(flash_model, reasoning_effort, api_keys_json, providers_json)
     try:
+        req = _request_from_form(flash_model, reasoning_effort, api_keys_json, providers_json)
         with settings_override(_build_overrides(req)):
             first_name, last_name, language_code = await extract_name(content)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Failed to extract name: {e}"})
 
@@ -429,7 +431,10 @@ async def add_profile_document(
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": f"Failed to read file: {e}"})
 
-    overrides = _build_overrides(_request_from_form(flash_model, reasoning_effort, api_keys_json, providers_json))
+    try:
+        overrides = _build_overrides(_request_from_form(flash_model, reasoning_effort, api_keys_json, providers_json))
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
     extraction_worker.submit(profile_id, [doc.id], overrides=overrides or None)
     return {"id": doc.id, "title": doc.title, "kind": doc.kind}
 
@@ -794,9 +799,15 @@ def _request_from_form(
     if reasoning_effort:
         payload["reasoning_effort"] = reasoning_effort
     if api_keys_json:
-        payload["api_keys"] = json.loads(api_keys_json)
+        try:
+            payload["api_keys"] = json.loads(api_keys_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid api_keys_json: {exc.msg}") from exc
     if providers_json:
-        payload["providers"] = json.loads(providers_json)
+        try:
+            payload["providers"] = json.loads(providers_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid providers_json: {exc.msg}") from exc
     if content is not None:
         payload["content"] = content
     if job_text is not None:

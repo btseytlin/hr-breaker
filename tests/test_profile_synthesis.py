@@ -74,12 +74,13 @@ def test_fallback_whole_doc_skip_not_bisect():
     assert "x" * 100 not in source.content
 
 
-def test_fallback_top1_when_all_over_budget():
-    """If every doc exceeds budget, include the highest-priority one in full."""
+def test_fallback_omits_all_docs_when_everything_is_over_budget():
+    """If every doc exceeds budget, omit them rather than blowing past the cap."""
     profile = _make_profile()
     doc = _make_doc(content="x" * 15000)
     source = synthesize_profile_resume_source(profile, [doc], [_ranked(doc)])
-    assert "x" * 100 in source.content  # top-1 included regardless
+    assert "x" * 100 not in source.content
+    assert "Note: omitted (over budget): Resume" in source.content
 
 
 def test_fallback_uses_last_name_without_duplication():

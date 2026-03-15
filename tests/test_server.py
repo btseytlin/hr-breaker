@@ -109,6 +109,20 @@ async def test_resume_upload_applies_llm_overrides(client, monkeypatch):
         config_module.clear_settings_cache()
 
 @pytest.mark.asyncio
+async def test_resume_upload_rejects_malformed_override_json(client):
+    resp = await client.post(
+        "/api/resume/upload",
+        files={"file": ("resume.txt", b"John Doe\nSoftware Engineer", "text/plain")},
+        data={
+            "api_keys_json": "{not-json}",
+        },
+    )
+
+    assert resp.status_code == 400
+    assert "Invalid api_keys_json" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
 async def test_paste_resume_empty(client):
     resp = await client.post("/api/resume/paste", json={"content": "  "})
     assert resp.status_code == 400
@@ -211,6 +225,26 @@ async def test_stream_nonexistent(client):
 async def test_pdf_not_found(client):
     resp = await client.get("/api/pdf/nonexistent.pdf")
     assert resp.status_code == 404
+
+@pytest.mark.asyncio
+async def test_profile_document_upload_rejects_malformed_override_json(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PROFILE_DIR", str(tmp_path))
+    config_module.clear_settings_cache()
+    try:
+        store = ProfileStore()
+        profile = store.create_profile("Candidate")
+
+        resp = await client.post(
+            f"/api/profile/{profile.id}/document",
+            files={"file": ("resume.txt", b"resume text", "text/plain")},
+            data={"providers_json": "{not-json}"},
+        )
+
+        assert resp.status_code == 400
+        assert "Invalid providers_json" in resp.json()["error"]
+    finally:
+        config_module.clear_settings_cache()
+
 
 @pytest.mark.asyncio
 async def test_profile_document_upload_forwards_llm_overrides(client, monkeypatch, tmp_path):

@@ -19,18 +19,16 @@ from hr_breaker.models.profile import (
 from hr_breaker.models.resume import ResumeSource
 
 _MAX_MERGED_SUMMARIES = 2
+_WHOLE_DOC_FALLBACK_OVERHEAD_CHARS = 50
 
-# Kind priority for whole-doc fallback ordering (lower = higher priority)
+# Kind priority for whole-doc fallback ordering (lower = higher priority).
+# Keep this aligned with DocumentKind.
 KIND_PRIORITY: dict[str, int] = {
     "resume": 0,
-    "experience": 1,
-    "education": 2,
-    "bio": 3,
-    "facts": 4,
-    "note": 5,
-    "paper": 6,
-    "pdf": 7,
-    "other": 7,
+    "note": 1,
+    "paper": 2,
+    "pdf": 3,
+    "other": 4,
 }
 
 
@@ -392,10 +390,10 @@ def synthesize_from_whole_docs(
         selected,
         key=lambda d: (KIND_PRIORITY.get(d.kind, 7), -score_by_id.get(d.id, 0.0)),
     )
-    budget = max_chars - len(header) - 50
+    budget = max_chars - len(header) - _WHOLE_DOC_FALLBACK_OVERHEAD_CHARS
     included: list[str] = []
     skipped: list[str] = []
-    remaining = budget
+    remaining = max(0, budget)
     for doc in ordered:
         section = f"\n\n## {doc.title} [{doc.kind}]\n{doc.content_text.strip()}"
         if len(section) <= remaining:
@@ -403,11 +401,6 @@ def synthesize_from_whole_docs(
             remaining -= len(section)
         else:
             skipped.append(doc.title)
-
-    if not included and ordered:
-        top = ordered[0]
-        included.append(f"\n\n## {top.title} [{top.kind}]\n{top.content_text.strip()}")
-        skipped = [d.title for d in ordered[1:]]
 
     body = "Profile documents:" + "".join(included)
     if skipped:

@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 
 import pytest
 
@@ -52,3 +54,42 @@ class TestSettingsOverride:
         original = config_module.get_settings().pro_model
         with config_module.settings_override({"pro_model": None}):
             assert config_module.get_settings().pro_model == original
+
+
+    def test_overrides_are_serialized_across_threads(self):
+        entered: list[str] = []
+        first_ready = threading.Event()
+        release_first = threading.Event()
+        second_done = threading.Event()
+        observed: dict[str, str] = {}
+
+        def first_worker():
+            with config_module.settings_override({"openai_api_base": "https://first.example.test/v1"}):
+                entered.append("first")
+                first_ready.set()
+                assert os.environ.get("OPENAI_API_BASE") == "https://first.example.test/v1"
+                assert release_first.wait(timeout=2)
+
+        def second_worker():
+            assert first_ready.wait(timeout=2)
+            with config_module.settings_override({"openai_api_base": "https://second.example.test/v1"}):
+                entered.append("second")
+                observed["value"] = os.environ.get("OPENAI_API_BASE") or ""
+            second_done.set()
+
+        first_thread = threading.Thread(target=first_worker)
+        second_thread = threading.Thread(target=second_worker)
+        first_thread.start()
+        second_thread.start()
+
+        assert first_ready.wait(timeout=2)
+        time.sleep(0.05)
+        assert entered == ["first"]
+
+        release_first.set()
+        first_thread.join(timeout=2)
+        second_thread.join(timeout=2)
+
+        assert second_done.is_set()
+        assert entered == ["first", "second"]
+        assert observed["value"] == "https://second.example.test/v1"

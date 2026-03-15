@@ -69,10 +69,6 @@ def _usage_payload(component: str, model_name: str, usage: Any) -> dict[str, Any
     cache_write_tokens = _usage_value(usage, "cache_write_tokens")
     requests = _usage_value(usage, "requests") or (1 if any((input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)) else 0)
     usage_available = any((input_tokens, output_tokens, cache_read_tokens, cache_write_tokens))
-    if not usage_available and _looks_like_embedding_model(model_name):
-        usage_available = False
-    else:
-        usage_available = True
     return {
         "timestamp": datetime.now().strftime("%H:%M:%S.%f")[:-3],
         "component": component,

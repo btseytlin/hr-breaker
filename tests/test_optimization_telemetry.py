@@ -117,7 +117,7 @@ def test_report_usage_keeps_zero_usage_available_for_non_embedding_models():
         report_usage("LLMChecker", "openai/gpt-5.3-codex", usage)
 
     assert len(captured) == 1
-    assert captured[0]["usage_available"] is True
+    assert captured[0]["usage_available"] is False
 
 
 def test_report_usage_maps_prompt_completion_tokens_for_litellm_usage():

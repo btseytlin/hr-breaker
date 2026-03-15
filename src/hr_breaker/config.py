@@ -1,6 +1,7 @@
 import contextlib
 import logging
 import os
+import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,9 @@ def setup_logging() -> logging.Logger:
 
 
 logger = setup_logging()
+
+
+_SETTINGS_OVERRIDE_LOCK = threading.RLock()
 
 
 class Settings(BaseSettings):
@@ -237,47 +241,52 @@ _API_KEY_ENV_MAP = {
 
 @contextlib.contextmanager
 def settings_override(overrides: dict | None):
-    """Temporarily override settings via env vars, restoring originals on exit."""
+    """Temporarily override settings via env vars, restoring originals on exit.
+
+    Overrides are serialized because the app still relies on process-global env vars
+    for downstream model/provider clients. This avoids cross-request leakage.
+    """
     if not overrides:
         yield
         return
 
-    saved: dict[str, str | None] = {}
+    with _SETTINGS_OVERRIDE_LOCK:
+        saved: dict[str, str | None] = {}
 
-    # Apply field overrides
-    for field, value in overrides.items():
-        if field == "api_keys":
-            continue
-        if value is None:
-            continue
-        env_var = _FIELD_ENV_MAP.get(field)
-        if env_var is None:
-            continue
-        saved[env_var] = os.environ.get(env_var)
-        os.environ[env_var] = str(value)
-
-    # Apply API key overrides
-    api_keys = overrides.get("api_keys")
-    if api_keys:
-        for provider, key_value in api_keys.items():
-            if key_value is None:
+        # Apply field overrides
+        for field, value in overrides.items():
+            if field == "api_keys":
                 continue
-            env_var = _API_KEY_ENV_MAP.get(provider)
+            if value is None:
+                continue
+            env_var = _FIELD_ENV_MAP.get(field)
             if env_var is None:
                 continue
             saved[env_var] = os.environ.get(env_var)
-            os.environ[env_var] = str(key_value)
+            os.environ[env_var] = str(value)
 
-    get_settings.cache_clear()
-    try:
-        yield
-    finally:
-        for env_var, original in saved.items():
-            if original is None:
-                os.environ.pop(env_var, None)
-            else:
-                os.environ[env_var] = original
+        # Apply API key overrides
+        api_keys = overrides.get("api_keys")
+        if api_keys:
+            for provider, key_value in api_keys.items():
+                if key_value is None:
+                    continue
+                env_var = _API_KEY_ENV_MAP.get(provider)
+                if env_var is None:
+                    continue
+                saved[env_var] = os.environ.get(env_var)
+                os.environ[env_var] = str(key_value)
+
         get_settings.cache_clear()
+        try:
+            yield
+        finally:
+            for env_var, original in saved.items():
+                if original is None:
+                    os.environ.pop(env_var, None)
+                else:
+                    os.environ[env_var] = original
+            get_settings.cache_clear()
 
 
 def get_model_settings() -> dict[str, Any] | None:

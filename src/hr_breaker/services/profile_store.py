@@ -1,22 +1,28 @@
 import logging
+import os
 import shutil
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from hr_breaker.config import get_settings
-
-logger = logging.getLogger(__name__)
 from hr_breaker.models.profile import DocumentKind, Profile, ProfileDocument
 from hr_breaker.services.pdf_parser import load_resume_content_from_upload
 from hr_breaker.services.pdf_storage import sanitize_filename
+
+logger = logging.getLogger(__name__)
 
 
 class ProfileStore:
     """Persist local profile archives under the cache directory."""
 
+    _path_locks_guard = threading.Lock()
+    _path_locks: dict[str, threading.Lock] = {}
+
     def __init__(self, root_dir: Path | None = None):
-        self.root_dir = root_dir or get_settings().profile_dir
+        self.root_dir = (root_dir or get_settings().profile_dir).resolve()
         self.root_dir.mkdir(parents=True, exist_ok=True)
 
     def list_profiles(self) -> list[Profile]:
@@ -30,7 +36,10 @@ class ProfileStore:
         return sorted(profiles, key=lambda profile: profile.updated_at, reverse=True)
 
     def get_profile(self, profile_id: str) -> Profile | None:
-        path = self._profile_path(profile_id)
+        try:
+            path = self._profile_path(profile_id)
+        except ValueError:
+            return None
         if not path.exists():
             return None
         try:
@@ -63,7 +72,10 @@ class ProfileStore:
         profile_dir.mkdir(parents=True, exist_ok=True)
         self._documents_dir(updated.id).mkdir(parents=True, exist_ok=True)
         self._assets_dir(updated.id).mkdir(parents=True, exist_ok=True)
-        self._profile_path(updated.id).write_text(updated.model_dump_json(indent=2), encoding="utf-8")
+        self._write_json_atomically(
+            self._profile_path(updated.id),
+            updated.model_dump_json(indent=2),
+        )
         return updated
 
     def rename_profile(self, profile_id: str, display_name: str) -> Profile | None:
@@ -103,7 +115,11 @@ class ProfileStore:
 
     def list_documents(self, profile_id: str) -> list[ProfileDocument]:
         documents: list[ProfileDocument] = []
-        for path in sorted(self._documents_dir(profile_id).glob("*.json")):
+        try:
+            document_dir = self._documents_dir(profile_id)
+        except ValueError:
+            return []
+        for path in sorted(document_dir.glob("*.json")):
             try:
                 documents.append(ProfileDocument.model_validate_json(path.read_text(encoding="utf-8")))
             except Exception as exc:
@@ -112,7 +128,10 @@ class ProfileStore:
         return sorted(documents, key=lambda document: document.timestamp, reverse=True)
 
     def get_document(self, profile_id: str, document_id: str) -> ProfileDocument | None:
-        path = self._document_path(profile_id, document_id)
+        try:
+            path = self._document_path(profile_id, document_id)
+        except ValueError:
+            return None
         if not path.exists():
             return None
         try:
@@ -229,9 +248,9 @@ class ProfileStore:
                 new_meta["asset_path"] = asset_relative_path
             document = candidate.model_copy(update={"metadata": new_meta})
 
-        self._document_path(profile_id, document.id).write_text(
+        self._write_json_atomically(
+            self._document_path(profile_id, document.id),
             document.model_dump_json(indent=2),
-            encoding="utf-8",
         )
         self.save_profile(profile)
         return document
@@ -262,11 +281,12 @@ class ProfileStore:
 
     def remove_document(self, profile_id: str, document_id: str) -> None:
         path = self._document_path(profile_id, document_id)
-        if path.exists():
-            path.unlink()
-        asset_prefix = f"{document_id}_"
-        for asset_path in self._assets_dir(profile_id).glob(f"{asset_prefix}*"):
-            asset_path.unlink(missing_ok=True)
+        with self._path_lock(path):
+            if path.exists():
+                path.unlink()
+            asset_prefix = f"{document_id}_"
+            for asset_path in self._assets_dir(profile_id).glob(f"{asset_prefix}*"):
+                asset_path.unlink(missing_ok=True)
         profile = self.get_profile(profile_id)
         if profile is not None:
             self.save_profile(profile)
@@ -277,15 +297,39 @@ class ProfileStore:
         document_id: str,
         document: ProfileDocument,
     ) -> bool:
-        path = self._document_path(profile_id, document_id)
-        payload = document.model_dump_json(indent=2)
+        return self._write_json_atomically(
+            self._document_path(profile_id, document_id),
+            document.model_dump_json(indent=2),
+            require_existing=True,
+        )
+
+    @classmethod
+    def _path_lock(cls, path: Path) -> threading.Lock:
+        key = str(path)
+        with cls._path_locks_guard:
+            lock = cls._path_locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                cls._path_locks[key] = lock
+            return lock
+
+    def _write_json_atomically(
+        self,
+        path: Path,
+        payload: str,
+        *,
+        require_existing: bool = False,
+    ) -> bool:
+        tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        lock = self._path_lock(path)
         try:
-            with path.open("r+", encoding="utf-8") as handle:
-                handle.seek(0)
-                handle.write(payload)
-                handle.truncate()
-        except FileNotFoundError:
-            return False
+            with lock:
+                if require_existing and not path.exists():
+                    return False
+                tmp_path.write_text(payload, encoding="utf-8")
+                os.replace(tmp_path, path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
         return True
 
 
@@ -337,7 +381,11 @@ class ProfileStore:
         return "other"
 
     def _profile_dir(self, profile_id: str) -> Path:
-        return self.root_dir / profile_id
+        safe_profile_id = self._validate_identifier(profile_id, label="profile_id")
+        path = (self.root_dir / safe_profile_id).resolve()
+        if not path.is_relative_to(self.root_dir):
+            raise ValueError(f"Invalid profile_id: {profile_id}")
+        return path
 
     def _profile_path(self, profile_id: str) -> Path:
         return self._profile_dir(profile_id) / "profile.json"
@@ -349,10 +397,19 @@ class ProfileStore:
         return self._profile_dir(profile_id) / "assets"
 
     def _document_path(self, profile_id: str, document_id: str) -> Path:
-        return self._documents_dir(profile_id) / f"{document_id}.json"
+        safe_document_id = self._validate_identifier(document_id, label="document_id")
+        return self._documents_dir(profile_id) / f"{safe_document_id}.json"
 
     def _asset_path(self, profile_id: str, document_id: str, filename: str) -> Path:
+        safe_document_id = self._validate_identifier(document_id, label="document_id")
         original = Path(filename)
         safe_stem = sanitize_filename(original.stem) or "asset"
-        safe_name = f"{document_id}_{safe_stem}{original.suffix.lower()}"
+        safe_name = f"{safe_document_id}_{safe_stem}{original.suffix.lower()}"
         return self._assets_dir(profile_id) / safe_name
+
+    def _validate_identifier(self, value: str, *, label: str) -> str:
+        if not value or value in {".", ".."}:
+            raise ValueError(f"Invalid {label}: {value}")
+        if Path(value).name != value or "/" in value or "\\" in value:
+            raise ValueError(f"Invalid {label}: {value}")
+        return value
