@@ -41,7 +41,7 @@ document.addEventListener('alpine:init', () => {
             flashModel: '',
             embeddingModel: '',
             reasoningEffort: '',
-            apiKeys: { gemini: '', openrouter: '', openai: '', anthropic: '', moonshot: '' },
+            apiKeys: { gemini: '', openrouter: '', openai: '', deepseek: '', anthropic: '', moonshot: '' },
             thresholds: { hallucination: 0.9, keyword: 0.25, llm: 0.7, vector: 0.4, ai_generated: 0.4, translation: 0.95 },
         },
 
@@ -52,7 +52,7 @@ document.addEventListener('alpine:init', () => {
             flashModel: '',
             embeddingModel: '',
             reasoningEffort: '',
-            apiKeysSet: { gemini: false, openrouter: false, openai: false, anthropic: false, moonshot: false },
+            apiKeysSet: { gemini: false, openrouter: false, openai: false, deepseek: false, anthropic: false, moonshot: false },
             filterThresholds: {},
         },
 
@@ -91,6 +91,7 @@ document.addEventListener('alpine:init', () => {
                 ['gemini', 'Gemini API Key'],
                 ['openrouter', 'OpenRouter API Key'],
                 ['openai', 'OpenAI API Key'],
+                ['deepseek', 'DeepSeek API Key'],
                 ['anthropic', 'Anthropic API Key'],
                 ['moonshot', 'Moonshot API Key'],
             ];
@@ -146,7 +147,7 @@ document.addEventListener('alpine:init', () => {
                     const { apiKeys, ...rest } = state.settings;
                     Object.assign(this.settings, rest);
                     // Always reset apiKeys to empty (never restore from storage)
-                    this.settings.apiKeys = { gemini: '', openrouter: '', openai: '', anthropic: '', moonshot: '' };
+                    this.settings.apiKeys = { gemini: '', openrouter: '', openai: '', deepseek: '', anthropic: '', moonshot: '' };
                     this._restoredFromStorage = true;
                 }
                 if (state.drawerSections) {
