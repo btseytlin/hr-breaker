@@ -18,6 +18,8 @@ class IterationContext(BaseModel):
 
         lines = []
         for r in self.validation.results:
+            if r.skipped:
+                continue
             status = "PASSED" if r.passed else "FAILED"
             lines.append(f"[{r.filter_name}] Score: {r.score:.2f}/{r.threshold:.2f} ({status})")
             if r.issues:

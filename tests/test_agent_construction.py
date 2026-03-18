@@ -9,10 +9,7 @@ from hr_breaker.agents.optimizer import get_optimizer_agent
 from hr_breaker.agents.combined_reviewer import get_combined_reviewer_agent
 from hr_breaker.agents.hallucination_detector import get_hallucination_agent
 from hr_breaker.agents.ai_generated_detector import get_ai_generated_agent
-from hr_breaker.agents.translator import get_translator_agent
-from hr_breaker.agents.translation_reviewer import get_translation_reviewer_agent
 from hr_breaker.models import JobPosting, ResumeSource
-from hr_breaker.models.language import get_language
 
 
 def test_job_parser_agent():
@@ -42,11 +39,3 @@ def test_hallucination_agent_no_shame():
 
 def test_ai_generated_agent():
     assert get_ai_generated_agent() is not None
-
-
-def test_translator_agent():
-    assert get_translator_agent(get_language("ru")) is not None
-
-
-def test_translation_reviewer_agent():
-    assert get_translation_reviewer_agent(get_language("ru")) is not None

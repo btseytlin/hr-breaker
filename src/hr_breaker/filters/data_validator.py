@@ -5,6 +5,7 @@ import re
 from hr_breaker.filters.base import BaseFilter
 from hr_breaker.filters.registry import FilterRegistry
 from hr_breaker.models import FilterResult, JobPosting, OptimizedResume, ResumeSource
+from hr_breaker.models.language import Language
 
 
 def validate_html(html: str) -> tuple[bool, list[str]]:
@@ -88,6 +89,8 @@ class DataValidator(BaseFilter):
         optimized: OptimizedResume,
         job: JobPosting,
         source: ResumeSource,
+        language: Language | None = None,
+        source_language: Language | None = None,
     ) -> FilterResult:
         # Choose validation based on which field is present
         if optimized.html is not None:

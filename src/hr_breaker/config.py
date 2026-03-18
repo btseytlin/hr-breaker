@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import os
 from functools import lru_cache
@@ -17,6 +18,7 @@ load_dotenv()
 
 litellm.suppress_debug_info = True
 litellm_patch.apply()
+
 
 def setup_logging() -> logging.Logger:
     general_level = os.getenv("LOG_LEVEL_GENERAL", "WARNING").upper()
@@ -39,10 +41,14 @@ logger = setup_logging()
 class Settings(BaseSettings):
     """Application settings. Reads from env vars (uppercased field names)."""
 
-    # API key (accepts GOOGLE_API_KEY as fallback for backward compat)
+    # API keys (accepts GOOGLE_API_KEY as fallback for backward compat with Gemini)
     gemini_api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+    )
+    moonshot_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MOONSHOT_API_KEY"),
     )
 
     pro_model: str = "gemini/gemini-3-pro-preview"
@@ -71,6 +77,7 @@ class Settings(BaseSettings):
     filter_llm_threshold: float = 0.7
     filter_vector_threshold: float = 0.4
     filter_ai_generated_threshold: float = 0.4
+    filter_translation_threshold: float = 0.95
 
     # Resume length limits
     resume_max_chars: int = 4500
@@ -83,15 +90,14 @@ class Settings(BaseSettings):
     keyword_max_missing_display: int = 10
 
     # Embedding settings
-    embedding_model: str = "gemini/text-embedding-004"
+    embedding_model: str = "openrouter/google/gemini-embedding-001"
     embedding_output_dimensionality: int = 768
 
     # Agent limits
     agent_name_extractor_chars: int = 2000
 
-    # Translation settings
-    default_language: str = "en"
-    translation_max_iterations: int = 2
+    # Language settings
+    default_language: str = "from_job"
 
     # Retry settings
     retry_max_attempts: int = 5
@@ -116,6 +122,18 @@ class Settings(BaseSettings):
     def model_post_init(self, __context: Any) -> None:
         if self.gemini_api_key and "GEMINI_API_KEY" not in os.environ:
             os.environ["GEMINI_API_KEY"] = self.gemini_api_key
+        if self.moonshot_api_key and "MOONSHOT_API_KEY" not in os.environ:
+            os.environ["MOONSHOT_API_KEY"] = self.moonshot_api_key
+
+        if self.proxy_url:
+            for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+                if key not in os.environ and key.lower() not in os.environ:
+                    os.environ[key] = self.proxy_url
+                    os.environ[key.lower()] = self.proxy_url
+
+            if "NO_PROXY" not in os.environ and "no_proxy" not in os.environ:
+                os.environ["NO_PROXY"] = self.no_proxy
+                os.environ["no_proxy"] = self.no_proxy
 
         if self.proxy_url:
             for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
@@ -139,6 +157,73 @@ def get_pro_model() -> LiteLLMModel:
 
 def get_flash_model() -> LiteLLMModel:
     return LiteLLMModel(model_name=get_settings().flash_model)
+
+
+_FIELD_ENV_MAP = {
+    "pro_model": "PRO_MODEL",
+    "flash_model": "FLASH_MODEL",
+    "embedding_model": "EMBEDDING_MODEL",
+    "reasoning_effort": "REASONING_EFFORT",
+    "filter_hallucination_threshold": "FILTER_HALLUCINATION_THRESHOLD",
+    "filter_keyword_threshold": "FILTER_KEYWORD_THRESHOLD",
+    "filter_llm_threshold": "FILTER_LLM_THRESHOLD",
+    "filter_vector_threshold": "FILTER_VECTOR_THRESHOLD",
+    "filter_ai_generated_threshold": "FILTER_AI_GENERATED_THRESHOLD",
+    "filter_translation_threshold": "FILTER_TRANSLATION_THRESHOLD",
+}
+
+_API_KEY_ENV_MAP = {
+    "gemini": "GEMINI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "moonshot": "MOONSHOT_API_KEY",
+}
+
+
+@contextlib.contextmanager
+def settings_override(overrides: dict | None):
+    """Temporarily override settings via env vars, restoring originals on exit."""
+    if not overrides:
+        yield
+        return
+
+    saved: dict[str, str | None] = {}
+
+    # Apply field overrides
+    for field, value in overrides.items():
+        if field == "api_keys":
+            continue
+        if value is None:
+            continue
+        env_var = _FIELD_ENV_MAP.get(field)
+        if env_var is None:
+            continue
+        saved[env_var] = os.environ.get(env_var)
+        os.environ[env_var] = str(value)
+
+    # Apply API key overrides
+    api_keys = overrides.get("api_keys")
+    if api_keys:
+        for provider, key_value in api_keys.items():
+            if key_value is None:
+                continue
+            env_var = _API_KEY_ENV_MAP.get(provider)
+            if env_var is None:
+                continue
+            saved[env_var] = os.environ.get(env_var)
+            os.environ[env_var] = str(key_value)
+
+    get_settings.cache_clear()
+    try:
+        yield
+    finally:
+        for env_var, original in saved.items():
+            if original is None:
+                os.environ.pop(env_var, None)
+            else:
+                os.environ[env_var] = original
+        get_settings.cache_clear()
 
 
 def get_model_settings() -> dict[str, Any] | None:

@@ -7,6 +7,7 @@ from hr_breaker.config import get_settings
 from hr_breaker.filters.base import BaseFilter
 from hr_breaker.filters.registry import FilterRegistry
 from hr_breaker.models import FilterResult, JobPosting, OptimizedResume, ResumeSource
+from hr_breaker.models.language import Language
 
 
 @dataclass
@@ -103,6 +104,8 @@ class KeywordMatcher(BaseFilter):
         optimized: OptimizedResume,
         job: JobPosting,
         source: ResumeSource,
+        language: Language | None = None,
+        source_language: Language | None = None,
     ) -> FilterResult:
         if optimized.pdf_text is None:
             return FilterResult(

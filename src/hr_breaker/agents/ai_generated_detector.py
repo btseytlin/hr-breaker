@@ -5,6 +5,7 @@ from pydantic_ai import Agent
 
 from hr_breaker.config import get_flash_model, get_model_settings
 from hr_breaker.models import FilterResult, OptimizedResume
+from hr_breaker.models.language import Language
 from hr_breaker.utils.retry import run_with_retry
 
 
@@ -84,7 +85,7 @@ def get_ai_generated_agent() -> Agent:
     return agent
 
 
-async def detect_ai_generated(optimized: OptimizedResume) -> FilterResult:
+async def detect_ai_generated(optimized: OptimizedResume, language: Language | None = None) -> FilterResult:
     """Detect AI-generated content in optimized resume."""
     # Use pdf_text (extracted from rendered PDF) for analysis
     if optimized.pdf_text:
@@ -103,6 +104,16 @@ async def detect_ai_generated(optimized: OptimizedResume) -> FilterResult:
 === END ===
 
 Look for patterns that indicate AI generation while ignoring normal resume conventions."""
+
+    if language is not None and language.code != "en":
+        prompt += f"""
+=== LANGUAGE NOTE ===
+This resume is written in {language.english_name}. This is intentional.
+- Evaluate AI-generation patterns in {language.english_name}, not English
+- {language.english_name} professional resume conventions may differ from English ones — do not flag cultural differences as AI tells
+- Technical terms in English (Python, AWS) mixed with {language.english_name} text is normal, not an AI indicator
+- Focus on: fabricated claims, impossible timelines, buzzword soup with no specifics, internal contradictions
+"""
 
     agent = get_ai_generated_agent()
     result = await run_with_retry(agent.run, prompt)

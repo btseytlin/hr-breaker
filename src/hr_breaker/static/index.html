@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HR-Breaker</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="/static/js/app.js"></script>
+</head>
+<body>
+<div x-data="app">
+
+    <!-- Header -->
+    <div class="header">
+        <h1>HR-Breaker</h1>
+    </div>
+
+    <!-- Two-column layout -->
+    <div class="layout">
+
+        <!-- Main content -->
+        <div class="main">
+
+            <!-- Resume + Job input grid -->
+            <div class="input-grid">
+
+                <!-- Resume card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Resume</h2>
+                        <span class="badge" :class="resume.loaded ? 'badge-ok' : 'badge-missing'"
+                              x-text="resume.loaded ? 'Ready' : 'Required'"></span>
+                    </div>
+
+                    <!-- Loaded state -->
+                    <template x-if="resume.loaded">
+                        <div>
+                            <div class="loaded-state">
+                                <span class="name" x-text="resumeName"></span>
+                                <button class="btn btn-ghost btn-sm" @click="clearResume">Change</button>
+                            </div>
+                            <div class="preview-toggle" @click="resume.showPreview = !resume.showPreview; if (resume.showPreview) loadResumeContent()"
+                                 x-text="resume.showPreview ? 'Hide preview' : 'Show preview'"></div>
+                            <div class="preview-content" x-show="resume.showPreview" x-text="resume.contentPreview || 'Loading...'"></div>
+                        </div>
+                    </template>
+
+                    <!-- Input state -->
+                    <div x-show="resume.error" class="field-error" x-text="resume.error"></div>
+
+                    <template x-if="!resume.loaded">
+                        <div>
+                            <!-- Cached resume picker -->
+                            <template x-if="cachedResumes.length > 0">
+                                <div class="cached-resumes">
+                                    <label>Previously used</label>
+                                    <template x-for="r in cachedResumes" :key="r.checksum">
+                                        <div class="cached-resume-item" @click="selectCachedResume(r)">
+                                            <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                                                <span class="name" x-text="[r.first_name, r.last_name].filter(Boolean).join(' ') || 'Unknown'"></span>
+                                                <span style="display: flex; align-items: center; gap: 6px;">
+                                                    <span class="meta" x-text="formatShortDate(r.timestamp)"></span>
+                                                    <button class="btn-remove" @click.stop="removeCachedResume(r.checksum)" title="Remove">&times;</button>
+                                                </span>
+                                            </div>
+                                            <span class="meta" x-text="r.filename || 'pasted'"></span>
+                                        </div>
+                                    </template>
+                                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin: 6px 0 4px">Or add new:</div>
+                                </div>
+                            </template>
+
+                            <div class="tabs">
+                                <button class="tab" :class="resume.inputMode === 'upload' && 'active'"
+                                        @click="resume.inputMode = 'upload'">Upload</button>
+                                <button class="tab" :class="resume.inputMode === 'paste' && 'active'"
+                                        @click="resume.inputMode = 'paste'">Paste</button>
+                            </div>
+
+                            <template x-if="resume.inputMode === 'upload'">
+                                <div class="file-drop" :class="{'dragover': $el._dragover}"
+                                     @dragover.prevent="$el._dragover = true"
+                                     @dragleave="$el._dragover = false"
+                                     @drop.prevent="$el._dragover = false; handleFileUpload({target: {files: $event.dataTransfer.files}})">
+                                    <template x-if="!resume.loading">
+                                        <div>
+                                            <div>Drop file or click to browse</div>
+                                            <div class="file-hint">.tex .md .txt .pdf</div>
+                                        </div>
+                                    </template>
+                                    <template x-if="resume.loading">
+                                        <div><span class="spinner"></span> Extracting name...</div>
+                                    </template>
+                                    <input type="file" accept=".tex,.md,.txt,.pdf" @change="handleFileUpload($event)">
+                                </div>
+                            </template>
+
+                            <template x-if="resume.inputMode === 'paste'">
+                                <div>
+                                    <textarea x-model="resume.pasteText" placeholder="Paste resume text..." rows="4"></textarea>
+                                    <button class="btn btn-secondary btn-sm" style="margin-top: 8px"
+                                            @click="submitPasteResume" :disabled="!resume.pasteText.trim() || resume.loading">
+                                        <template x-if="resume.loading"><span class="spinner"></span></template>
+                                        Submit
+                                    </button>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Job card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Job Posting</h2>
+                        <span class="badge" :class="job.loaded ? 'badge-ok' : 'badge-missing'"
+                              x-text="job.loaded ? 'Ready' : 'Required'"></span>
+                    </div>
+
+                    <!-- Loaded state -->
+                    <template x-if="job.loaded">
+                        <div>
+                            <div class="loaded-state">
+                                <span class="name" x-text="job.preview + '...'"></span>
+                                <button class="btn btn-ghost btn-sm" @click="clearJob">Change</button>
+                            </div>
+                            <div class="preview-toggle" @click="job.showPreview = !job.showPreview"
+                                 x-text="job.showPreview ? 'Hide preview' : 'Show preview'"></div>
+                            <div class="preview-content" x-show="job.showPreview" x-text="job.text"></div>
+                        </div>
+                    </template>
+
+                    <!-- Input state -->
+                    <template x-if="!job.loaded">
+                        <div>
+                            <!-- Cached job picker -->
+                            <template x-if="cachedJobs.length > 0">
+                                <div class="cached-resumes">
+                                    <label>Previously used</label>
+                                    <template x-for="j in cachedJobs" :key="j.checksum">
+                                        <div class="cached-resume-item" @click="selectCachedJob(j)">
+                                            <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                                                <span class="name" x-text="shortenUrl(j.source) || 'pasted'"></span>
+                                                <span style="display: flex; align-items: center; gap: 6px;">
+                                                    <span class="meta" x-text="j.timestamp ? formatShortDate(j.timestamp) : ''"></span>
+                                                    <button class="btn-remove" @click.stop="removeCachedJob(j.checksum)" title="Remove">&times;</button>
+                                                </span>
+                                            </div>
+                                            <span class="meta" x-text="j.preview"></span>
+                                        </div>
+                                    </template>
+                                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin: 6px 0 4px">Or add new:</div>
+                                </div>
+                            </template>
+
+                            <div class="tabs">
+                                <button class="tab" :class="job.inputMode === 'url' && 'active'"
+                                        @click="job.inputMode = 'url'">URL</button>
+                                <button class="tab" :class="job.inputMode === 'paste' && 'active'"
+                                        @click="job.inputMode = 'paste'">Paste</button>
+                            </div>
+
+                            <template x-if="job.inputMode === 'url'">
+                                <div>
+                                    <div style="display: flex; gap: 8px">
+                                        <input type="url" x-model="job.url" placeholder="https://..."
+                                               @keydown.enter="scrapeJobUrl">
+                                        <button class="btn btn-secondary btn-sm" @click="scrapeJobUrl"
+                                                :disabled="!job.url.trim() || job.loading">
+                                            <template x-if="job.loading"><span class="spinner"></span></template>
+                                            Fetch
+                                        </button>
+                                    </div>
+                                    <div x-show="job.error" style="color: var(--error); font-size: 0.85rem; margin-top: 6px"
+                                         x-text="job.error"></div>
+                                </div>
+                            </template>
+
+                            <template x-if="job.inputMode === 'paste'">
+                                <div>
+                                    <textarea x-model="job.pasteText" placeholder="Paste job posting..." rows="4"></textarea>
+                                    <button class="btn btn-secondary btn-sm" style="margin-top: 8px"
+                                            @click="submitPasteJob" :disabled="!job.pasteText.trim()">
+                                        Submit
+                                    </button>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Instructions -->
+            <div class="instructions-area">
+                <label>Additional instructions</label>
+                <textarea x-model="settings.instructions" rows="2"
+                          placeholder="E.g. Focus on Python and AWS experience, add my Kubernetes certification..."></textarea>
+            </div>
+
+            <!-- Optimize / Cancel button -->
+            <div style="display: flex; gap: 8px">
+                <button class="btn btn-primary" @click="startOptimization" :disabled="!canOptimize"
+                        x-show="!optimization.running">
+                    <span x-text="optimizeButtonText"></span>
+                </button>
+                <button class="btn btn-primary btn-danger" @click="cancelOptimization"
+                        x-show="optimization.running">
+                    <span class="spinner"></span>
+                    Cancel
+                </button>
+            </div>
+
+            <!-- Progress section -->
+            <div class="progress-section" x-show="optimization.running || optimization.iterations.length > 0 || optimization.finalResult || optimization.error || optimization.cancelled">
+
+                <!-- Status message while running -->
+                <div x-show="optimization.running && optimization.statusMessage" class="status-message">
+                    <span class="spinner"></span>
+                    <span x-text="optimization.statusMessage"></span>
+                </div>
+
+                <!-- Log panel -->
+                <div x-show="optimization.logs.length > 0" class="log-section">
+                    <div class="log-toggle" @click="optimization.logsOpen = !optimization.logsOpen">
+                        <span x-text="(optimization.logsOpen ? 'Hide' : 'Show') + ' logs (' + optimization.logs.length + ')'"></span>
+                        <span class="chevron" :class="optimization.logsOpen && 'open'"></span>
+                    </div>
+                    <div x-show="optimization.logsOpen" id="log-panel" class="log-panel">
+                        <template x-for="(log, i) in optimization.logs" :key="i">
+                            <div class="log-line">
+                                <span class="log-level" :class="'log-' + log.level.toLowerCase()" x-text="({DEBUG:'DEBUG',INFO:'INFO ',WARNING:'WARN ',ERROR:'ERROR',CRITICAL:'CRIT '}[log.level] || log.level).substring(0,5)"></span>
+                                <span class="log-msg" x-text="log.message"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Error -->
+                <div x-show="optimization.error" class="status-banner status-fail" style="margin-top: 12px"
+                     x-text="optimization.error"></div>
+
+                <!-- Cancelled -->
+                <div x-show="optimization.cancelled && !optimization.error" class="status-banner status-fail" style="margin-top: 12px">
+                    Optimization cancelled
+                </div>
+
+                <!-- Final result banner -->
+                <template x-if="optimization.finalResult">
+                    <div>
+                        <div class="status-banner" style="margin-top: 12px"
+                             :class="optimization.finalResult.passed ? 'status-pass' : 'status-fail'"
+                             x-text="optimization.finalResult.passed ? 'All filters passed!' : 'Some filters failed (max iterations reached)'"></div>
+
+                        <!-- Result actions -->
+                        <div class="result-actions" x-show="optimization.finalResult.pdf_filename">
+                            <a class="btn btn-primary" style="width: auto"
+                               :href="'/api/pdf/' + optimization.finalResult.pdf_filename"
+                               target="_blank">
+                                Download PDF
+                            </a>
+                            <button class="btn btn-secondary" @click="showPdfPreview = !showPdfPreview"
+                                    x-text="showPdfPreview ? 'Hide Preview' : 'Preview PDF'"></button>
+                            <button class="btn btn-secondary" @click="openFolder">Open Folder</button>
+                        </div>
+
+                        <!-- PDF Preview iframe -->
+                        <template x-if="showPdfPreview && optimization.finalResult.pdf_filename">
+                            <div class="pdf-preview">
+                                <iframe :src="'/api/pdf/' + optimization.finalResult.pdf_filename + '?inline=true'"
+                                        style="width: 100%; height: 600px; border: 1px solid var(--border); border-radius: 6px; background: #fff;"></iframe>
+                            </div>
+                        </template>
+
+                        <div class="result-meta" x-show="optimization.finalResult.job">
+                            <span x-text="optimization.finalResult.job.title"></span> at
+                            <span x-text="optimization.finalResult.job.company"></span>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Iteration cards -->
+                <template x-for="iter in optimization.iterations" :key="iter.iteration">
+                    <div class="iteration-card">
+                        <div class="iteration-header" @click="toggleIteration(iter.iteration)">
+                            <span>
+                                <strong x-text="'Iteration ' + iter.iteration"></strong>
+                                <span :class="iter.passed ? 'filter-pass' : 'filter-fail'"
+                                      x-text="iter.passed ? 'PASS' : 'FAIL'"
+                                      style="margin-left: 8px; font-size: 0.85rem"></span>
+                            </span>
+                            <span class="collapse-hint"
+                                  x-text="expandedIterations[iter.iteration] ? 'collapse' : 'expand'"></span>
+                        </div>
+
+                        <div class="iteration-body" x-show="expandedIterations[iter.iteration]">
+                            <!-- Changes -->
+                            <div x-show="iter.changes && iter.changes.length" class="changes-list">
+                                <div class="changes-label">Changes:</div>
+                                <template x-for="change in iter.changes">
+                                    <div class="change-item">- <span x-text="change"></span></div>
+                                </template>
+                            </div>
+
+                            <!-- Filter results -->
+                            <template x-for="r in iter.results" :key="r.filter_name">
+                                <div>
+                                    <div class="filter-row">
+                                        <span class="filter-icon"
+                                              :class="r.skipped ? 'filter-skip' : (r.passed ? 'filter-pass' : 'filter-fail')"
+                                              x-text="r.skipped ? '-' : (r.passed ? 'OK' : 'X')"></span>
+                                        <span class="filter-name" x-text="r.filter_name"></span>
+                                        <span class="filter-score" x-show="!r.skipped"
+                                              x-text="r.score.toFixed(2) + '/' + r.threshold.toFixed(2)"></span>
+                                    </div>
+                                    <div class="filter-details" x-show="!r.skipped && (r.issues.length || r.suggestions.length)">
+                                        <template x-for="issue in r.issues">
+                                            <div style="color: var(--error)">- <span x-text="issue"></span></div>
+                                        </template>
+                                        <template x-for="sug in r.suggestions">
+                                            <div style="color: var(--warning)">- <span x-text="sug"></span></div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+
+            </div>
+        </div>
+
+        <!-- Sidebar (always visible) -->
+        <aside class="sidebar">
+
+            <!-- Run Options -->
+            <div class="sidebar-section">
+                <div class="sidebar-section-title" @click="drawerSections.options = !drawerSections.options">
+                    <span>Run Options</span>
+                    <span class="chevron" :class="drawerSections.options && 'open'"></span>
+                </div>
+                <div class="sidebar-section-body" x-show="drawerSections.options">
+                    <div class="setting-field">
+                        <label for="opt-lang">Language</label>
+                        <select id="opt-lang" x-model="settings.language">
+                            <template x-for="mode in appSettings.languageModes" :key="mode.value">
+                                <option :value="mode.value" x-text="mode.label"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="setting-field">
+                        <label for="opt-iter">Max iterations</label>
+                        <input type="number" id="opt-iter" x-model.number="settings.maxIterations" min="1" max="10" style="width: 80px">
+                    </div>
+                    <div class="setting-row">
+                        <input type="checkbox" id="opt-seq" x-model="settings.sequential">
+                        <label for="opt-seq">Sequential filters</label>
+                    </div>
+                    <div class="setting-row">
+                        <input type="checkbox" id="opt-debug" x-model="settings.debug">
+                        <label for="opt-debug">Debug mode (save iterations)</label>
+                    </div>
+                    <div class="setting-row">
+                        <input type="checkbox" id="opt-shame" x-model="settings.noShame">
+                        <label for="opt-shame">No Shame mode</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Models -->
+            <div class="sidebar-section">
+                <div class="sidebar-section-title" @click="drawerSections.models = !drawerSections.models">
+                    <span>Models</span>
+                    <span class="chevron" :class="drawerSections.models && 'open'"></span>
+                </div>
+                <div class="sidebar-section-body" x-show="drawerSections.models">
+                    <div class="setting-field">
+                        <label for="opt-pro-model">Pro model</label>
+                        <input type="text" id="opt-pro-model" x-model="settings.proModel">
+                    </div>
+                    <div class="setting-field">
+                        <label for="opt-flash-model">Flash model</label>
+                        <input type="text" id="opt-flash-model" x-model="settings.flashModel">
+                    </div>
+                    <div class="setting-field">
+                        <label for="opt-embed-model">Embedding model</label>
+                        <input type="text" id="opt-embed-model" x-model="settings.embeddingModel">
+                    </div>
+                    <div class="setting-field">
+                        <label for="opt-reasoning">Reasoning effort</label>
+                        <select id="opt-reasoning" x-model="settings.reasoningEffort">
+                            <option value="">Default</option>
+                            <option value="none">None</option>
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- API Keys -->
+            <div class="sidebar-section">
+                <div class="sidebar-section-title" @click="drawerSections.apiKeys = !drawerSections.apiKeys">
+                    <span>API Keys</span>
+                    <span class="chevron" :class="drawerSections.apiKeys && 'open'"></span>
+                </div>
+                <div class="sidebar-section-body" x-show="drawerSections.apiKeys">
+                    <div class="sidebar-hint">Override keys for this run. Keys from .env are used by default.</div>
+                    <template x-for="[key, label] in apiKeyEntries" :key="key">
+                        <div class="setting-field">
+                            <label x-text="label"></label>
+                            <div class="key-input-row">
+                                <input type="password" x-model="settings.apiKeys[key]"
+                                       :placeholder="appSettings.apiKeysSet[key] ? '(set in .env)' : '(not set)'">
+                                <span class="key-status"
+                                      :class="(settings.apiKeys[key] || appSettings.apiKeysSet[key]) ? 'key-set' : 'key-unset'"
+                                      x-text="(settings.apiKeys[key] || appSettings.apiKeysSet[key]) ? 'SET' : '-'"></span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Filter Thresholds -->
+            <div class="sidebar-section">
+                <div class="sidebar-section-title" @click="drawerSections.thresholds = !drawerSections.thresholds">
+                    <span>Filter Thresholds</span>
+                    <span class="chevron" :class="drawerSections.thresholds && 'open'"></span>
+                </div>
+                <div class="sidebar-section-body" x-show="drawerSections.thresholds">
+                    <div class="sidebar-hint">Lower = more lenient. Values 0-1.</div>
+                    <template x-for="[key, label] in thresholdEntries" :key="key">
+                        <div class="setting-field">
+                            <label x-text="label"></label>
+                            <div class="threshold-row">
+                                <input type="range" min="0" max="1" step="0.05"
+                                       x-model.number="settings.thresholds[key]">
+                                <span class="threshold-value" x-text="settings.thresholds[key].toFixed(2)"></span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- History -->
+            <div class="sidebar-section">
+                <div class="sidebar-section-title" @click="drawerSections.history = !drawerSections.history">
+                    <span>History <span style="font-weight: normal; text-transform: none" x-text="'(' + history.length + ')'"></span></span>
+                    <span class="chevron" :class="drawerSections.history && 'open'"></span>
+                </div>
+                <div class="sidebar-section-body" x-show="drawerSections.history">
+                    <div class="action-row" style="margin-bottom: 8px">
+                        <button class="btn btn-ghost btn-sm" @click="openFolder">Open folder</button>
+                        <button class="btn btn-ghost btn-sm" @click="loadHistory">Refresh</button>
+                    </div>
+                    <div class="history-list">
+                        <template x-for="pdf in history.slice(0, 20)" :key="pdf.filename">
+                            <a class="history-item" :href="'/api/pdf/' + pdf.filename" target="_blank">
+                                <div x-text="pdf.company + ' - ' + pdf.job_title"></div>
+                                <div class="meta" x-text="formatTimestamp(pdf.timestamp)"></div>
+                            </a>
+                        </template>
+                        <div x-show="history.length === 0" class="empty-hint">
+                            No PDFs yet
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </aside>
+    </div>
+
+</div>
+</body>
+</html>

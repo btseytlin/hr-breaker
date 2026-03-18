@@ -1,9 +1,12 @@
 """CLI interface for HR-Breaker."""
 
 import asyncio
+import threading
+import webbrowser
 from pathlib import Path
 
 import click
+import uvicorn
 
 from hr_breaker.agents import extract_name, parse_job_posting
 from hr_breaker.config import get_settings
@@ -11,7 +14,8 @@ from hr_breaker.models import (
     GeneratedPDF,
     ResumeSource,
     SUPPORTED_LANGUAGES,
-    get_language, 
+    get_language_safe,
+    resolve_target_language,
 )
 from hr_breaker.orchestration import optimize_for_job
 from hr_breaker.services import (
@@ -20,6 +24,7 @@ from hr_breaker.services import (
     ScrapingError,
     CloudflareBlockedError,
 )
+from hr_breaker.services.pdf_storage import generate_run_id
 from hr_breaker.services.pdf_parser import load_resume_content
 
 
@@ -46,10 +51,10 @@ OUTPUT_DIR = Path("output")
     "--max-iterations", "-n", type=int, default=None, envvar="HR_BREAKER_MAX_ITERATIONS"
 )
 @click.option(
-    "--debug",
-    "-d",
-    is_flag=True,
-    help="Save all iterations as PDFs to output/debug/",
+    "--debug/--no-debug",
+    "-d/-D",
+    default=True,
+    help="Save all iterations as PDFs to output/debug/ (default: on)",
     envvar="HR_BREAKER_DEBUG",
 )
 @click.option(
@@ -69,10 +74,11 @@ OUTPUT_DIR = Path("output")
     "--lang",
     "-l",
     type=click.Choice(
-        [lang.code for lang in SUPPORTED_LANGUAGES], case_sensitive=False
+        ["from_job", "from_resume"] + [lang.code for lang in SUPPORTED_LANGUAGES],
+        case_sensitive=False,
     ),
     default=None,
-    help="Output language (default: en). Optimization runs in English, then translates.",
+    help="Language mode: from_job (detect from job), from_resume (detect from resume), or ISO code (default: from_job).",
 )
 @click.option(
     "--instructions",
@@ -103,6 +109,7 @@ def optimize(
     job_text = _get_job_text(job_input)
 
     pdf_storage = PDFStorage()
+    run_id = generate_run_id()
     debug_dir: Path | None = None
 
     def on_iteration(i, optimized, validation):
@@ -110,6 +117,7 @@ def optimize(
         scores = ", ".join(
             f"{r.filter_name}:{r.score:.2f}/{r.threshold:.2f}"
             for r in validation.results
+            if not r.skipped
         )
         click.echo(f"  Iteration {i + 1}: {status} [{scores}]")
 
@@ -131,36 +139,35 @@ def optimize(
             else:
                 click.echo(f"    Debug: no PDF (render failed)")
 
-    # Resolve target language
     settings = get_settings()
-    lang_code = lang or settings.default_language
-    target_language = get_language(lang_code) if lang_code != "en" else None
-
-    def on_translation_status(msg: str):
-        click.echo(f"  {msg}")
+    lang_mode = lang or settings.default_language
 
     # Run all async work in single event loop
     async def run_optimization():
         nonlocal debug_dir
-        first_name, last_name = await extract_name(resume_content)
-        click.echo(f"Resume: {first_name or 'Unknown'} {last_name or ''}")
+        first_name, last_name, resume_lang_code = await extract_name(resume_content)
+        click.echo(f"Resume: {first_name or 'Unknown'} {last_name or ''} (lang: {resume_lang_code})")
 
         # Parse job first to get company/role for debug dir
         job = await parse_job_posting(job_text)
-        click.echo(f"Job: {job.title} at {job.company}")
+        click.echo(f"Job: {job.title} at {job.company} (lang: {job.language_code})")
+
+        # Resolve language mode
+        target_language = resolve_target_language(lang_mode, job.language_code, resume_lang_code)
+        source_lang = get_language_safe(resume_lang_code)
 
         if debug:
-            debug_dir = pdf_storage.generate_debug_dir(job.company, job.title)
+            debug_dir = pdf_storage.generate_debug_dir(job.company, job.title, run_id=run_id)
 
         mode = "sequential" if seq else "parallel"
         shame_mode = " [no-shame]" if no_shame else ""
-        lang_label = f" [lang: {lang_code}]" if target_language else ""
-        click.echo(f"Optimizing (mode: {mode}{shame_mode}{lang_label})...")
+        click.echo(f"Optimizing (mode: {mode}{shame_mode}, target: {target_language.english_name})...")
 
         source = ResumeSource(
             content=resume_content,
             first_name=first_name,
             last_name=last_name,
+            language_code=resume_lang_code,
         )
         optimized, validation, _ = await optimize_for_job(
             source,
@@ -171,13 +178,14 @@ def optimize(
             no_shame=no_shame,
             user_instructions=instructions,
             language=target_language,
-            on_translation_status=on_translation_status,
+            source_language=source_lang,
         )
-        return first_name, last_name, source, optimized, validation, job
+        return first_name, last_name, source, optimized, validation, job, target_language
 
-    first_name, last_name, source, optimized, validation, job = asyncio.run(
+    first_name, last_name, source, optimized, validation, job, target_language = asyncio.run(
         run_optimization()
     )
+    lang_code = target_language.code
 
     if not validation.passed:
         click.echo("Warning: Not all filters passed")
@@ -193,6 +201,7 @@ def optimize(
                 job.company,
                 job.title,
                 lang_code=lang_code,
+                run_id=run_id,
             ).name
         )
 
@@ -276,6 +285,20 @@ def _read_multiline_input() -> str:
     if not text:
         raise click.ClickException("No job description provided")
     return text
+
+
+@cli.command()
+@click.option("--port", "-p", type=int, default=8899, help="Port to serve on")
+@click.option("--open/--no-open", default=True, help="Auto-open browser")
+def serve(port: int, open: bool):
+    """Start the web UI server."""
+    url = f"http://localhost:{port}"
+    click.echo(f"Starting HR-Breaker at {url}")
+
+    if open:
+        threading.Timer(1.5, webbrowser.open, args=[url]).start()
+
+    uvicorn.run("hr_breaker.server:app", host="0.0.0.0", port=port, log_level="warning")
 
 
 if __name__ == "__main__":

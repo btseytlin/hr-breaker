@@ -3,6 +3,7 @@ from hr_breaker.config import get_settings, logger
 from hr_breaker.filters.base import BaseFilter
 from hr_breaker.filters.registry import FilterRegistry
 from hr_breaker.models import FilterResult, JobPosting, OptimizedResume, ResumeSource
+from hr_breaker.models.language import Language
 
 
 @FilterRegistry.register
@@ -21,8 +22,10 @@ class LLMChecker(BaseFilter):
         optimized: OptimizedResume,
         job: JobPosting,
         source: ResumeSource,
+        language: Language | None = None,
+        source_language: Language | None = None,
     ) -> FilterResult:
-        result, _, page_count, render_warnings = await combined_review(optimized, job)
+        result, _, page_count, render_warnings = await combined_review(optimized, job, language=language)
 
         logger.debug(
             f"LLMChecker: professional={result.looks_professional}, "

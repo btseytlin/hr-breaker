@@ -15,6 +15,8 @@ class ResumeSource(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
     first_name: str | None = None
     last_name: str | None = None
+    language_code: str = "en"
+    filename: str | None = None  # Original upload filename
     instructions: str | None = None
 
     @model_validator(mode="before")
@@ -26,6 +28,8 @@ class ResumeSource(BaseModel):
                 data["content"] = data.pop("latex")
             if "notes" in data and "instructions" not in data:
                 data["instructions"] = data.pop("notes")
+            if "language_code" not in data:
+                data["language_code"] = "en"
         return data
 
     # Legacy alias for backward compatibility
@@ -50,3 +54,4 @@ class OptimizedResume(BaseModel):
     pdf_text: str | None = None
     pdf_bytes: bytes | None = None
     pdf_path: Path | None = None
+    page_count: int | None = None

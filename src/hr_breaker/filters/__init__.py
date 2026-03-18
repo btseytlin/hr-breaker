@@ -7,6 +7,7 @@ from .keyword_matcher import KeywordMatcher, check_keywords
 from .vector_similarity_matcher import VectorSimilarityMatcher
 from .hallucination_checker import HallucinationChecker
 from .ai_generated_checker import AIGeneratedChecker
+from .translation_checker import TranslationQualityChecker
 
 __all__ = [
     "BaseFilter",
@@ -18,5 +19,6 @@ __all__ = [
     "VectorSimilarityMatcher",
     "HallucinationChecker",
     "AIGeneratedChecker",
+    "TranslationQualityChecker",
     "check_keywords",
 ]

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
 from hr_breaker.models import FilterResult, JobPosting, OptimizedResume, ResumeSource
+from hr_breaker.models.language import Language
 
 
 class BaseFilter(ABC):
@@ -19,6 +20,8 @@ class BaseFilter(ABC):
         optimized: OptimizedResume,
         job: JobPosting,
         source: ResumeSource,
+        language: Language | None = None,
+        source_language: Language | None = None,
     ) -> FilterResult:
         """Evaluate the optimized resume against the job posting."""
         pass

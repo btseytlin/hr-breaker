@@ -5,6 +5,7 @@ from pydantic_ai import Agent
 
 from hr_breaker.config import get_model_settings, get_pro_model
 from hr_breaker.models import FilterResult, OptimizedResume, ResumeSource
+from hr_breaker.models.language import Language
 from hr_breaker.utils.retry import run_with_retry
 
 
@@ -106,6 +107,7 @@ async def detect_hallucinations(
     optimized: OptimizedResume,
     source: ResumeSource,
     no_shame: bool = False,
+    language: Language | None = None,
 ) -> FilterResult:
     """Detect hallucinations in optimized resume vs original."""
     # Use html or data depending on what's available
@@ -131,7 +133,19 @@ async def detect_hallucinations(
     prompt += f"""
 === OPTIMIZED RESUME (check for fabrication) ===
 {optimized_content}
+"""
 
+    if language is not None and language.code != "en":
+        prompt += f"""
+=== LANGUAGE NOTE ===
+The optimized resume is written in {language.english_name} while the original may be in English or another language.
+- Content has been translated/rewritten in {language.english_name} — do NOT treat language differences as hallucinations
+- Compare MEANING, not exact wording — the same fact expressed in {language.english_name} is NOT a fabrication
+- Technical terms kept in English (Python, AWS, etc.) are normal practice, not hallucination
+- Focus on: fabricated jobs, fake degrees, invented metrics, companies that don't exist
+"""
+
+    prompt += """
 === END ===
 
 Return a no_hallucination_score (0.0-1.0) based on how faithful the optimized version is to the original.

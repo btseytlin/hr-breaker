@@ -3,6 +3,7 @@ from hr_breaker.config import get_settings
 from hr_breaker.filters.base import BaseFilter
 from hr_breaker.filters.registry import FilterRegistry
 from hr_breaker.models import FilterResult, JobPosting, OptimizedResume, ResumeSource
+from hr_breaker.models.language import Language
 
 
 @FilterRegistry.register
@@ -21,8 +22,10 @@ class HallucinationChecker(BaseFilter):
         optimized: OptimizedResume,
         job: JobPosting,
         source: ResumeSource,
+        language: Language | None = None,
+        source_language: Language | None = None,
     ) -> FilterResult:
-        result = await detect_hallucinations(optimized, source, no_shame=self.no_shame)
+        result = await detect_hallucinations(optimized, source, no_shame=self.no_shame, language=language)
         if not self.no_shame:
             result.threshold = self.threshold
         return result
