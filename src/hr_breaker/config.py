@@ -125,26 +125,6 @@ class Settings(BaseSettings):
         if self.moonshot_api_key and "MOONSHOT_API_KEY" not in os.environ:
             os.environ["MOONSHOT_API_KEY"] = self.moonshot_api_key
 
-        if self.proxy_url:
-            for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
-                if key not in os.environ and key.lower() not in os.environ:
-                    os.environ[key] = self.proxy_url
-                    os.environ[key.lower()] = self.proxy_url
-
-            if "NO_PROXY" not in os.environ and "no_proxy" not in os.environ:
-                os.environ["NO_PROXY"] = self.no_proxy
-                os.environ["no_proxy"] = self.no_proxy
-
-        if self.proxy_url:
-            for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
-                if key not in os.environ and key.lower() not in os.environ:
-                    os.environ[key] = self.proxy_url
-                    os.environ[key.lower()] = self.proxy_url
-
-            if "NO_PROXY" not in os.environ and "no_proxy" not in os.environ:
-                os.environ["NO_PROXY"] = self.no_proxy
-                os.environ["no_proxy"] = self.no_proxy
-
 
 @lru_cache
 def get_settings() -> Settings:

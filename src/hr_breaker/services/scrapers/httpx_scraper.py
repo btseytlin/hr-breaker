@@ -61,7 +61,7 @@ class HttpxScraper(BaseScraper):
         }
 
         with httpx.Client(
-            follow_redirects=True, timeout=self.timeout, trust_env=True
+            follow_redirects=True, timeout=self.timeout, proxy=get_settings().proxy_url
         ) as client:
             response = client.get(url, headers=headers)
             html = response.text
