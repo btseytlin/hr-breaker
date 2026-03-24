@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     pro_model: str = "gemini/gemini-3-pro-preview"
     flash_model: str = "gemini/gemini-3-flash-preview"
     reasoning_effort: str = "medium"
+    max_tokens: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MAX_TOKENS", "MAX_OUTPUT_TOKENS"),
+        gt=0,
+    )
     cache_dir: Path = Path(".cache/resumes")
     output_dir: Path = Path("output")
     max_iterations: int = 5
@@ -128,6 +133,7 @@ _FIELD_ENV_MAP = {
     "flash_model": "FLASH_MODEL",
     "embedding_model": "EMBEDDING_MODEL",
     "reasoning_effort": "REASONING_EFFORT",
+    "max_tokens": "MAX_TOKENS",
     "filter_hallucination_threshold": "FILTER_HALLUCINATION_THRESHOLD",
     "filter_keyword_threshold": "FILTER_KEYWORD_THRESHOLD",
     "filter_llm_threshold": "FILTER_LLM_THRESHOLD",
@@ -191,8 +197,13 @@ def settings_override(overrides: dict | None):
 
 
 def get_model_settings() -> dict[str, Any] | None:
-    """Get model settings with reasoning effort config."""
+    """Get model settings with reasoning effort and token cap config."""
     settings = get_settings()
+    model_settings: dict[str, Any] = {}
+
     if settings.reasoning_effort and settings.reasoning_effort != "none":
-        return {"reasoning_effort": settings.reasoning_effort}
-    return None
+        model_settings["reasoning_effort"] = settings.reasoning_effort
+    if settings.max_tokens is not None:
+        model_settings["max_tokens"] = settings.max_tokens
+
+    return model_settings or None

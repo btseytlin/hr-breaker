@@ -88,7 +88,7 @@ uv run hr-breaker list
 
 ## Configuration
 
-Copy `.env.example` to `.env` and set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`). Models are configurable via LiteLLM — any provider (OpenAI, Anthropic, Moonshot, etc.) works by setting `PRO_MODEL`, `FLASH_MODEL`, and the corresponding API key. See `.env.example` for all options.
+Copy `.env.example` to `.env` and set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`). Models are configurable via LiteLLM — any provider (OpenAI, Anthropic, Moonshot, etc.) works by setting `PRO_MODEL`, `FLASH_MODEL`, and the corresponding API key. To cap expensive responses, you can also set `MAX_TOKENS` (or the alias `MAX_OUTPUT_TOKENS`). See `.env.example` for all options.
 
 ---
 
