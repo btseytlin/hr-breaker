@@ -4,7 +4,11 @@ import logging
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from hr_breaker.models.profile import ProfileDocument
+    from hr_breaker.services.profile_store import ProfileStore
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +79,26 @@ class ExtractionWorker:
                 break
         return events
 
+    @staticmethod
+    def _maybe_update_profile_name(store: "ProfileStore", profile_id: str, doc: "ProfileDocument") -> None:
+        """Update profile first/last name from extracted personal_info if profile has none."""
+        extracted = doc.metadata.get("extracted_content") or {}
+        personal = extracted.get("personal_info") or {}
+        first = (personal.get("first_name") or "").strip()
+        last = (personal.get("last_name") or "").strip()
+        if not first and not last:
+            return
+        profile = store.get_profile(profile_id)
+        if profile is None:
+            return
+        if profile.first_name or profile.last_name:
+            return
+        updates: dict = {"first_name": first, "last_name": last}
+        new_display = " ".join(filter(None, [first, last]))
+        if new_display:
+            updates["display_name"] = new_display
+        store.save_profile(profile.model_copy(update=updates))
+
     def _run(self, profile_id: str, doc_id: str, overrides: dict | None = None) -> None:
         from hr_breaker.config import settings_override
         from hr_breaker.services.profile_store import ProfileStore
@@ -108,6 +132,10 @@ class ExtractionWorker:
             if status == "empty":
                 logger.warning("Extraction for '%s' produced no usable content", label)
                 self.log_queue.put({"level": "WARNING", "message": f"Extraction empty (no content found): {label}"})
+
+            # Update profile name from extracted personal_info if empty
+            self._maybe_update_profile_name(store, profile_id, updated_doc)
+
             with self._lock:
                 self._status[doc_id] = "done"
             self.log_queue.put({"level": "INFO", "message": f"Extracted: {label}"})

@@ -118,6 +118,10 @@ class ProviderCheckRequest(BaseModel):
     base_url: str | None = None
 
 
+class QuickCreateProfileRequest(BaseModel):
+    content: str | None = None
+
+
 class CreateProfileRequest(BaseModel):
     name: str
     instructions: str | None = None
@@ -352,9 +356,98 @@ async def list_profiles():
             "display_name": p.display_name or p.id,
             "document_count": len(store.list_documents(p.id)),
             "created_at": p.created_at.isoformat() if p.created_at else None,
+            "updated_at": p.updated_at.isoformat() if p.updated_at else None,
         }
         for p in profiles
     ]
+
+
+@app.post("/api/profile/quick-create")
+async def quick_create_profile(
+    file: UploadFile | None = File(None),
+    content: str | None = Form(None),
+    flash_model: str | None = Form(None),
+    reasoning_effort: str | None = Form(None),
+    api_keys_json: str | None = Form(None),
+    providers_json: str | None = Form(None),
+):
+    """Create a profile from a single file or pasted text in one call."""
+    from hr_breaker.services.profile_store import ProfileStore
+    from hr_breaker.services.extraction_worker import extraction_worker
+
+    if not file and not content:
+        return JSONResponse(status_code=400, content={"error": "Provide either file or content"})
+    if file and content:
+        return JSONResponse(status_code=400, content={"error": "Provide file or content, not both"})
+
+    store = ProfileStore()
+
+    try:
+        req = _request_from_form(flash_model, reasoning_effort, api_keys_json, providers_json)
+        overrides = _build_overrides(req)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+    if file:
+        data = await file.read()
+        filename = file.filename or "uploaded"
+        try:
+            raw_content = load_resume_content_from_upload(filename, data)
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": f"Failed to read file: {e}"})
+
+        # Sync name extraction for immediate display name
+        try:
+            with settings_override(overrides):
+                first_name, last_name, language_code = await extract_name(raw_content)
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": f"Failed to extract name: {e}"})
+
+        display_name = " ".join(filter(None, [first_name, last_name])) or filename
+        profile = store.create_profile(display_name=display_name, first_name=first_name, last_name=last_name)
+        try:
+            doc = store.add_upload(profile.id, filename=filename, data=data)
+        except Exception as e:
+            return JSONResponse(status_code=400, content={"error": f"Failed to add document: {e}"})
+    else:
+        raw_content = (content or "").strip()
+        if not raw_content:
+            return JSONResponse(status_code=400, content={"error": "Empty content"})
+
+        try:
+            with settings_override(overrides):
+                first_name, last_name, language_code = await extract_name(raw_content)
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": f"Failed to extract name: {e}"})
+
+        display_name = " ".join(filter(None, [first_name, last_name])) or "Pasted resume"
+        profile = store.create_profile(display_name=display_name, first_name=first_name, last_name=last_name)
+        doc = store.add_note(profile.id, title=display_name, content_text=raw_content)
+
+    # Start background extraction
+    extraction_worker.submit(profile.id, [doc.id], overrides=overrides or None)
+
+    # Also cache as ResumeSource for immediate use
+    source = ResumeSource(
+        content=raw_content,
+        first_name=first_name,
+        last_name=last_name,
+        language_code=language_code,
+        filename=file.filename if file else "pasted",
+        source_type="profile",
+        source_profile_id=profile.id,
+        source_profile_name=profile.display_name,
+    )
+    ResumeCache().put(source)
+
+    return {
+        "profile_id": profile.id,
+        "display_name": profile.display_name,
+        "first_name": first_name,
+        "last_name": last_name,
+        "checksum": source.checksum,
+        "document_count": 1,
+    }
 
 
 @app.post("/api/profile/")

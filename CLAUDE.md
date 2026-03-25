@@ -144,7 +144,13 @@ Repro: `uv run python scripts/repro_vision_bug.py` (without patch) vs `uv run py
 ### UI Architecture
 - Two-column layout: main area (left, max 900px) + sticky sidebar (right, 380px) with collapsible sections
 - Sidebar sections: Run Options, Models, API Keys, Filter Thresholds, History
-- Resume/job pickers: cached items shown as clickable list, newest first (mtime-ordered). Content fetched on demand, not in list payloads
+- **Profile-first resume UI**: profiles are the primary concept in the Resume card
+  - Profile list shown directly (no tabs). Clicking a profile auto-synthesizes it as resume
+  - Inline editor expands under profile item (edit icon) — shows docs, extraction badges, add note, re-extract
+  - Document selection: all docs selected by default. "Customize" checkbox reveals per-doc checkboxes (only for 2+ docs)
+  - `POST /api/profile/quick-create` — file or paste creates a profile + caches resume in one call
+  - Legacy cached resumes (non-profile `source_type`) shown in separate "Previous uploads" section below profiles
+  - Drop zone and paste toggle below profile list for quick profile creation
 - Per-run overrides: frontend sends model/key/threshold overrides with optimize request
 - Backend: `settings_override()` context manager temporarily sets env vars + clears `get_settings` cache for the duration of a run (safe since only one optimization runs at a time)
 - API keys: never persisted to localStorage, only sent per-request. Backend only returns boolean "is set" status, never actual values

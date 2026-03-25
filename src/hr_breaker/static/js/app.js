@@ -8,7 +8,7 @@ document.addEventListener('alpine:init', () => {
             lastName: null,
             contentPreview: '',
             instructions: '',
-            inputMode: 'upload', // 'upload' | 'paste' | 'profile'
+            pasteMode: false,
             pasteText: '',
             loading: false,
             showPreview: false,
@@ -76,10 +76,11 @@ document.addEventListener('alpine:init', () => {
         // Profile state
         profile: {
             list: [],
-            selected: null,
+            editingId: null,
             documents: [],
             selectedDocIds: [],
             selectionCustomized: false,
+            showDocCustomize: false,
             loading: false,
             uploading: false,
             synthesizing: false,
@@ -96,7 +97,6 @@ document.addEventListener('alpine:init', () => {
             noteContent: '',
             addingNote: false,
             _pollTimer: null,
-
         },
 
         // Model catalog cache (keyed by provider prefix)
@@ -141,58 +141,28 @@ document.addEventListener('alpine:init', () => {
             ];
         },
 
-        get resumePickerEntries() {
-            const profileNames = new Set(
-                this.profile.list
-                    .map((p) => (p.display_name || p.id).trim())
-                    .filter(Boolean)
-            );
-            const resumeEntries = this.cachedResumes.map((r) => {
-                const resumeName = [r.first_name, r.last_name].filter(Boolean).join(' ') || 'Unknown';
-                const inferredProfileName = !r.source_type && (r.filename || 'pasted') === 'pasted' && profileNames.has(resumeName)
-                    ? resumeName
-                    : null;
-                return {
-                    key: `resume:${r.checksum}`,
-                    kind: 'resume',
-                    name: resumeName,
-                    meta: r.source_type === 'profile' || inferredProfileName
-                        ? `from profile: ${r.source_profile_name || inferredProfileName || resumeName || 'unknown'}`
-                        : (r.filename || 'pasted'),
-                    timestamp: r.timestamp,
-                    resume: r,
-                };
-            });
-            const hiddenProfileIds = new Set(
-                this.cachedResumes
-                    .filter((r) => r.source_type === 'profile')
-                    .map((r) => r.source_profile_id)
-                    .filter(Boolean)
-            );
-            const hiddenProfileNames = new Set(
-                this.cachedResumes
-                    .map((r) => {
-                        const resumeName = [r.first_name, r.last_name].filter(Boolean).join(' ').trim();
-                        if (r.source_type === 'profile') {
-                            return (r.source_profile_name || resumeName).trim();
-                        }
-                        return (r.filename || 'pasted') === 'pasted' && profileNames.has(resumeName) ? resumeName : null;
-                    })
-                    .filter(Boolean)
-            );
-            const profileEntries = this.profile.list
-                .filter((p) => (p.document_count || 0) > 0)
-                .filter((p) => !hiddenProfileIds.has(p.id))
-                .filter((p) => !hiddenProfileNames.has((p.display_name || p.id).trim()))
-                .map((p) => ({
-                    key: `profile:${p.id}`,
-                    kind: 'profile',
-                    name: p.display_name || p.id,
-                    meta: `profile · ${p.document_count || 0} document(s)`,
-                    timestamp: null,
-                    profile: p,
-                }));
-            return [...resumeEntries, ...profileEntries];
+        get profileEntries() {
+            return this.profile.list;
+        },
+
+        get legacyResumeEntries() {
+            return this.cachedResumes.filter(r => r.source_type !== 'profile');
+        },
+
+        get editingProfile() {
+            return this.profile.list.find(p => p.id === this.profile.editingId) || null;
+        },
+
+        profileExtractionSummary(p) {
+            // Return aggregate status label for a profile's docs
+            // We only know doc counts from the list; detailed status comes from the editor
+            if (this.profile.editingId === p.id && this.profile.documents.length > 0) {
+                const statuses = this.profile.documents.map(d => d.extraction_status || 'pending');
+                if (statuses.some(s => s === 'error')) return 'error';
+                if (statuses.some(s => s === 'pending' || s === 'running')) return 'pending';
+                return 'done';
+            }
+            return '';
         },
 
         async init() {
@@ -205,24 +175,30 @@ document.addEventListener('alpine:init', () => {
                 this.loadHistory(),
                 this.checkActiveOptimization(),
             ]);
-            // Auto-select newest (by mtime) without touching — mtime is the source of truth
-            if (this.cachedResumes.length > 0) this._loadCachedResume(this.cachedResumes[0]);
+            // Restore last-selected resume, or fall back to newest by mtime
+            const savedChecksum = this._savedResumeChecksum;
+            const savedResume = savedChecksum && this.cachedResumes.find(r => r.checksum === savedChecksum);
+            if (savedResume) this._loadCachedResume(savedResume);
+            else if (this.cachedResumes.length > 0) this._loadCachedResume(this.cachedResumes[0]);
             if (this.cachedJobs.length > 0) await this._loadCachedJob(this.cachedJobs[0]);
 
             // Watch for changes and persist
             this.$watch('settings', () => this._saveToStorage());
+            this.$watch('resume.checksum', () => this._saveToStorage());
 
             // Load model catalogs for detected providers
             await this.fetchAllCatalogs();
         },
 
         _storageKey: 'hr-breaker-state',
+        _savedResumeChecksum: null,
 
         _saveToStorage() {
             const state = {
                 settings: this.settings,
                 drawerSections: this.drawerSections,
                 customBaseUrls: this.customBaseUrls,
+                selectedResumeChecksum: this.resume.checksum,
             };
             try { localStorage.setItem(this._storageKey, JSON.stringify(state)); } catch {}
         },
@@ -243,6 +219,9 @@ document.addEventListener('alpine:init', () => {
                 }
                 if (state.customBaseUrls && typeof state.customBaseUrls === 'object') {
                     Object.assign(this.customBaseUrls, state.customBaseUrls);
+                }
+                if (state.selectedResumeChecksum) {
+                    this._savedResumeChecksum = state.selectedResumeChecksum;
                 }
             } catch {}
         },
@@ -325,14 +304,6 @@ document.addEventListener('alpine:init', () => {
             await fetch('/api/resume/select/' + r.checksum, { method: 'POST' });
         },
 
-        async selectResumeSource(entry) {
-            if (entry.kind === 'profile') {
-                await this.selectProfile(entry.profile);
-                return;
-            }
-            await this.selectCachedResume(entry.resume);
-        },
-
         async loadResumeContent() {
             if (this.resume.contentPreview || !this.resume.checksum) return;
             try {
@@ -396,15 +367,23 @@ document.addEventListener('alpine:init', () => {
                 const formData = new FormData();
                 formData.append('file', file);
                 this._appendRunOverridesToFormData(formData, this._resumeRunOverrides());
-                const resp = await fetch('/api/resume/upload', { method: 'POST', body: formData });
+                const resp = await fetch('/api/profile/quick-create', { method: 'POST', body: formData });
                 if (!resp.ok) {
                     const text = await resp.text();
                     try { const j = JSON.parse(text); throw new Error(j.error || j.detail || text); }
                     catch (pe) { if (pe instanceof SyntaxError) throw new Error(text); throw pe; }
                 }
                 const data = await resp.json();
-
                 if (data.error) throw new Error(data.error);
+
+                // Add to profile list
+                this.profile.list.unshift({
+                    id: data.profile_id,
+                    display_name: data.display_name,
+                    document_count: data.document_count,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                });
 
                 this.resume.loaded = true;
                 this.resume.checksum = data.checksum;
@@ -425,22 +404,25 @@ document.addEventListener('alpine:init', () => {
             this.resume.loading = true;
             this.resume.error = null;
             try {
-                const resp = await fetch('/api/resume/paste', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        content: this.resume.pasteText,
-                        ...this._resumeRunOverrides(),
-                    }),
-                });
+                const formData = new FormData();
+                formData.append('content', this.resume.pasteText);
+                this._appendRunOverridesToFormData(formData, this._resumeRunOverrides());
+                const resp = await fetch('/api/profile/quick-create', { method: 'POST', body: formData });
                 if (!resp.ok) {
                     const text = await resp.text();
                     try { const j = JSON.parse(text); throw new Error(j.error || j.detail || text); }
                     catch (pe) { if (pe instanceof SyntaxError) throw new Error(text); throw pe; }
                 }
                 const data = await resp.json();
-
                 if (data.error) throw new Error(data.error);
+
+                this.profile.list.unshift({
+                    id: data.profile_id,
+                    display_name: data.display_name,
+                    document_count: data.document_count,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                });
 
                 this.resume.loaded = true;
                 this.resume.checksum = data.checksum;
@@ -448,6 +430,7 @@ document.addEventListener('alpine:init', () => {
                 this.resume.lastName = data.last_name;
                 this.resume.contentPreview = '';
                 this.resume.pasteText = '';
+                this.resume.pasteMode = false;
                 this.loadCachedResumes();
             } catch (e) {
                 this.resume.error = 'Failed: ' + e.message;
@@ -463,6 +446,7 @@ document.addEventListener('alpine:init', () => {
             this.resume.lastName = null;
             this.resume.contentPreview = '';
             this.resume.showPreview = false;
+            this.resume.pasteMode = false;
             this.resume.error = null;
             this.clearResult();
         },
@@ -1092,7 +1076,7 @@ document.addEventListener('alpine:init', () => {
             if (!confirm('Delete this profile and all its documents?')) return;
             await fetch('/api/profile/' + pid, { method: 'DELETE' });
             this.profile.list = this.profile.list.filter(p => p.id !== pid);
-            if (this.profile.selected && this.profile.selected.id === pid) {
+            if (this.profile.editingId === pid) {
                 this.closeProfileEditor();
             }
         },
@@ -1115,10 +1099,11 @@ document.addEventListener('alpine:init', () => {
         },
 
         async openProfileEditor(p) {
-            this.profile.selected = p;
+            this.profile.editingId = p.id;
             this.profile.documents = [];
             this.profile.selectedDocIds = [];
             this.profile.selectionCustomized = false;
+            this.profile.showDocCustomize = false;
             this.profile.extractionLogs = [];
             this.profile.error = null;
             await this._refreshProfileDocs(p.id);
@@ -1127,13 +1112,18 @@ document.addEventListener('alpine:init', () => {
 
         closeProfileEditor() {
             this._stopExtractionPoll();
-            this.profile.selected = null;
+            this.profile.editingId = null;
             this.profile.documents = [];
             this.profile.selectedDocIds = [];
             this.profile.selectionCustomized = false;
+            this.profile.showDocCustomize = false;
             this.profile.extractionLogs = [];
             this.profile.showNoteForm = false;
             this.profile.error = null;
+        },
+
+        toggleDocCustomize() {
+            this.profile.showDocCustomize = !this.profile.showDocCustomize;
         },
 
         _defaultSelectedProfileDocIds(documents = this.profile.documents) {
@@ -1163,9 +1153,6 @@ document.addEventListener('alpine:init', () => {
 
         _updateProfileSummary(pid, updates) {
             this.profile.list = this.profile.list.map((profile) => profile.id === pid ? { ...profile, ...updates } : profile);
-            if (this.profile.selected && this.profile.selected.id === pid) {
-                this.profile.selected = { ...this.profile.selected, ...updates };
-            }
         },
 
         async _refreshProfileDocs(pid) {
@@ -1182,7 +1169,7 @@ document.addEventListener('alpine:init', () => {
                     this.profile.selectedDocIds = this._defaultSelectedProfileDocIds(documents);
                 }
                 this._updateProfileSummary(pid, {
-                    display_name: data.name || this.profile.selected?.display_name,
+                    display_name: data.name || this.editingProfile?.display_name,
                     document_count: documents.length,
                 });
             } catch (e) {
@@ -1227,14 +1214,14 @@ document.addEventListener('alpine:init', () => {
 
         async uploadProfileDoc(event) {
             const fileList = event.target.files;
-            if (!fileList || !fileList.length || !this.profile.selected) return;
+            if (!fileList || !fileList.length || !this.profile.editingId) return;
             // Snapshot files before any DOM changes
             const files = Array.from(fileList);
             this.profile.uploading = true;
             this.profile.error = null;
             this.profile.uploadProgress = files.length > 1 ? `Uploading 1/${files.length}...` : 'Uploading...';
             try {
-                const pid = this.profile.selected.id;
+                const pid = this.profile.editingId;
                 for (let i = 0; i < files.length; i++) {
                     this.profile.uploadProgress = files.length > 1 ? `Uploading ${i + 1}/${files.length}...` : 'Uploading...';
                     const formData = new FormData();
@@ -1265,18 +1252,18 @@ document.addEventListener('alpine:init', () => {
         },
 
         async deleteProfileDoc(docId) {
-            if (!this.profile.selected) return;
-            await fetch('/api/profile/' + this.profile.selected.id + '/document/' + docId, { method: 'DELETE' });
+            if (!this.profile.editingId) return;
+            await fetch('/api/profile/' + this.profile.editingId + '/document/' + docId, { method: 'DELETE' });
             this.profile.documents = this.profile.documents.filter(d => d.id !== docId);
             this.profile.selectedDocIds = (this.profile.selectedDocIds || []).filter((id) => id !== docId);
-            this._updateProfileSummary(this.profile.selected.id, { document_count: this.profile.documents.length });
+            this._updateProfileSummary(this.profile.editingId, { document_count: this.profile.documents.length });
         },
 
         async reExtractProfile() {
-            if (!this.profile.selected) return;
+            if (!this.profile.editingId) return;
             this.profile.error = null;
             try {
-                const pid = this.profile.selected.id;
+                const pid = this.profile.editingId;
                 const resp = await fetch('/api/profile/' + pid + '/extract', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1292,11 +1279,11 @@ document.addEventListener('alpine:init', () => {
         },
 
         async addProfileNote() {
-            if (!this.profile.selected || !this.profile.noteTitle.trim()) return;
+            if (!this.profile.editingId || !this.profile.noteTitle.trim()) return;
             this.profile.addingNote = true;
             this.profile.error = null;
             try {
-                const resp = await fetch('/api/profile/' + this.profile.selected.id + '/note', {
+                const resp = await fetch('/api/profile/' + this.profile.editingId + '/note', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ title: this.profile.noteTitle.trim(), content: this.profile.noteContent.trim() }),
@@ -1310,8 +1297,8 @@ document.addEventListener('alpine:init', () => {
                 this.profile.noteContent = '';
                 this.profile.addingNote = false;
                 this.profile.showNoteForm = false;
-                await this._refreshProfileDocs(this.profile.selected.id);
-                this._startExtractionPoll(this.profile.selected.id);
+                await this._refreshProfileDocs(this.profile.editingId);
+                this._startExtractionPoll(this.profile.editingId);
             } catch (e) {
                 this.profile.error = 'Failed to add note: ' + e.message;
                 this.profile.addingNote = false;
@@ -1324,7 +1311,7 @@ document.addEventListener('alpine:init', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     job_text: this.job.text || null,
-                    selected_doc_ids: this.profile.selectedDocIds || [],
+                    selected_doc_ids: this.profile.selectionCustomized ? this.profile.selectedDocIds : null,
                     ...this._profileRunOverrides(),
                 }),
             });
@@ -1344,11 +1331,11 @@ document.addEventListener('alpine:init', () => {
         },
 
         async synthesizeProfile() {
-            if (!this.profile.selected) return;
+            if (!this.profile.editingId) return;
             this.profile.synthesizing = true;
             this.profile.error = null;
             try {
-                await this._synthesizeProfileToResume(this.profile.selected.id);
+                await this._synthesizeProfileToResume(this.profile.editingId);
             } catch (e) {
                 this.profile.error = 'Synthesis failed: ' + e.message;
             } finally {
