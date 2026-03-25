@@ -79,6 +79,9 @@ body {
 .sidebar-section-body { padding: 0 16px 12px; }
 
 .sidebar-hint { font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 8px; }
+.catalog-status.error { color: #e57373; }
+.catalog-status.warn { color: #ffb74d; }
+.catalog-status.info { color: var(--text-secondary); }
 
 /* --- Chevron --- */
 .chevron {
@@ -310,16 +313,17 @@ label {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    max-height: 176px;
+    max-height: 320px;
     overflow-y: auto;
     padding-right: 4px;
 }
 .cached-resume-item {
     display: flex;
     flex-direction: column;
-    padding: 6px 10px;
-    background: var(--bg);
-    border-radius: 4px;
+    padding: 12px 14px;
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    border-radius: 6px;
     cursor: pointer;
     margin-bottom: 4px;
     transition: background 0.15s;
@@ -327,8 +331,8 @@ label {
     min-width: 0;
 }
 .cached-resume-item:hover { background: var(--surface-hover); }
-.cached-resume-item .name { font-size: 0.85rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.cached-resume-item .meta { font-size: 0.7rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cached-resume-item .name { font-size: 0.95rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; line-height: 1.6; }
+.cached-resume-item .meta { font-size: 0.8rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.5; }
 .resume-source-actions {
     display: flex;
     align-items: center;
