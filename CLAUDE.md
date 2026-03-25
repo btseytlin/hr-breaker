@@ -155,7 +155,7 @@ Repro: `uv run python scripts/repro_vision_bug.py` (without patch) vs `uv run py
 - Backend: `settings_override()` context manager temporarily sets env vars + clears `get_settings` cache for the duration of a run (safe since only one optimization runs at a time)
 - API keys: never persisted to localStorage, only sent per-request. Backend only returns boolean "is set" status, never actual values
 - Settings (models, thresholds, reasoning effort) prefilled from server defaults on load
-- Only settings and drawer state persisted to localStorage (no job text, no API keys)
+- Only settings, drawer state, and selected resume checksum persisted to localStorage (no job text, no API keys)
 
 ### Language Mode System
 - Language is a **mode**, not a fixed code: `from_job` (default), `from_resume`, `en`, `ru`

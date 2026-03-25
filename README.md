@@ -13,6 +13,7 @@ Resume optimization tool that transforms any resume into a job-specific, ATS-fri
 - **No fabrication** - Hallucination detection prevents made-up claims
 - **Opinionated formatting** - Follows proven resume guidelines (one page, no fluff, etc.)
 - **Multi-filter validation** - ATS simulation, keyword matching, structure checks
+- **Profile system** - Group multiple resume documents into profiles with LLM-powered extraction and synthesis
 - **User instructions** - Guide the optimizer with extra context ("Focus on Python", "Add K8s cert")
 - **Multi-language output** - Auto-detect language from job/resume, or force a specific language (e.g. `-l ru`)
 - **Web UI + CLI** - FastAPI + Alpine.js web app or command-line
@@ -48,11 +49,13 @@ uv run hr-breaker serve
 
 Launch with `uv run hr-breaker serve` (default: http://localhost:8899)
 
-1. Paste or upload resume (cached for reuse across jobs)
+1. Drop a file or paste text to create a resume profile (or click an existing one)
 2. Enter job URL or paste description
 3. Configure settings in sidebar (models, API keys, filter thresholds)
 4. Click optimize — real-time progress via SSE
 5. Preview and download PDF
+
+Profiles group your resume documents — drop a file to auto-create a profile, or create one manually and add multiple documents. Click a profile to synthesize it into a resume, or click the edit icon to manage documents.
 
 ### CLI
 
@@ -98,7 +101,7 @@ Copy `.env.example` to `.env` and set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`). Mo
 src/hr_breaker/
 ├── agents/          # Pydantic-AI agents (optimizer, reviewer, etc.)
 ├── filters/         # Validation plugins (ATS, keywords, hallucination)
-├── services/        # Rendering, scraping, caching
+├── services/        # Rendering, scraping, caching, profiles
 │   └── scrapers/    # Job scraper implementations
 ├── models/          # Pydantic data models
 ├── static/          # Frontend (Alpine.js + CSS + JS)
