@@ -70,7 +70,6 @@ app = FastAPI(title="HR-Breaker")
 # --- API Models ---
 
 class ProviderOverride(BaseModel):
-    provider: str | None = None
     base_url: str | None = None
 
 
@@ -690,7 +689,7 @@ def _selected_custom_provider_bases(req: OptimizeRequest) -> list[str]:
     selected: list[str] = []
     for scope in ("pro", "flash", "embedding"):
         override = (req.providers or {}).get(scope)
-        if override and override.provider == "custom" and override.base_url:
+        if override and override.base_url:
             selected.append(f"{scope}: {override.base_url}")
     return selected
 
@@ -763,7 +762,7 @@ def _build_overrides(req: BaseModel | None) -> dict:
         ("embedding", "embedding_openai_api_base"),
     ):
         provider_override = (data.get("providers") or {}).get(scope) or {}
-        if provider_override.get("provider") == "custom" and provider_override.get("base_url"):
+        if provider_override.get("base_url"):
             overrides[field_name] = provider_override["base_url"]
     filter_thresholds = data.get("filter_thresholds")
     if filter_thresholds:

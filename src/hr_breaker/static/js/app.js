@@ -99,16 +99,10 @@ document.addEventListener('alpine:init', () => {
 
         },
 
-        // Provider state
-        provider: {
-            activeScope: 'pro',
-            shared: { selected: 'gemini', baseUrl: '' },
-            scopes: {
-                pro: { selected: null, baseUrl: null, status: 'unknown', message: '', detail: '', chatModels: [], embeddingModels: [], checking: false, _debounceTimer: null, _requestId: 0 },
-                flash: { selected: null, baseUrl: null, status: 'unknown', message: '', detail: '', chatModels: [], embeddingModels: [], checking: false, _debounceTimer: null, _requestId: 0 },
-                embedding: { selected: null, baseUrl: null, status: 'unknown', message: '', detail: '', chatModels: [], embeddingModels: [], checking: false, _debounceTimer: null, _requestId: 0 },
-            },
-        },
+        // Model catalog cache (keyed by provider prefix)
+        modelCatalog: {},
+        // Per-model base URLs for custom/OpenAI-compatible endpoints
+        customBaseUrls: { pro: '', flash: '', embedding: '' },
 
         // Cached resumes/jobs for pickers
         cachedResumes: [],
@@ -218,8 +212,8 @@ document.addEventListener('alpine:init', () => {
             // Watch for changes and persist
             this.$watch('settings', () => this._saveToStorage());
 
-            // Load provider catalogs after settings, so env keys are known
-            await this.checkAllProviders();
+            // Load model catalogs for detected providers
+            await this.fetchAllCatalogs();
         },
 
         _storageKey: 'hr-breaker-state',
@@ -228,7 +222,7 @@ document.addEventListener('alpine:init', () => {
             const state = {
                 settings: this.settings,
                 drawerSections: this.drawerSections,
-                provider: this._providerPreferences(),
+                customBaseUrls: this.customBaseUrls,
             };
             try { localStorage.setItem(this._storageKey, JSON.stringify(state)); } catch {}
         },
@@ -247,15 +241,8 @@ document.addEventListener('alpine:init', () => {
                 if (state.drawerSections) {
                     Object.assign(this.drawerSections, state.drawerSections);
                 }
-                if (state.provider && typeof state.provider === 'object') {
-                    this._applyProviderPreferences(state.provider);
-                } else {
-                    this._applyProviderPreferences({
-                        shared: {
-                            selected: state.providerSelected,
-                            customBaseUrl: state.providerBaseUrl,
-                        },
-                    });
+                if (state.customBaseUrls && typeof state.customBaseUrls === 'object') {
+                    Object.assign(this.customBaseUrls, state.customBaseUrls);
                 }
             } catch {}
         },
@@ -388,7 +375,7 @@ document.addEventListener('alpine:init', () => {
                 flash_model: this.settings.flashModel || null,
                 reasoning_effort: this.settings.reasoningEffort || null,
                 api_keys: this._nonEmptyApiKeys() || null,
-                providers: this._providerOverridesForRequest(['flash']),
+                providers: this._baseUrlOverrides(),
             };
         },
 
@@ -662,7 +649,7 @@ document.addEventListener('alpine:init', () => {
                 embedding_model: this.settings.embeddingModel || null,
                 reasoning_effort: this.settings.reasoningEffort || null,
                 api_keys: this._nonEmptyApiKeys() || null,
-                providers: this._providerOverridesForRequest(),
+                providers: this._baseUrlOverrides(),
                 filter_thresholds: this.settings.thresholds,
             };
 
@@ -899,7 +886,7 @@ document.addEventListener('alpine:init', () => {
                 embedding_model: this.settings.embeddingModel || null,
                 reasoning_effort: this.settings.reasoningEffort || null,
                 api_keys: this._nonEmptyApiKeys() || null,
-                providers: this._providerOverridesForRequest(['flash', 'embedding']),
+                providers: this._baseUrlOverrides(),
             };
             return overrides;
         },
@@ -930,297 +917,135 @@ document.addEventListener('alpine:init', () => {
             } catch { return url.substring(0, 40); }
         },
 
-        // --- Provider actions ---
+        // --- Provider / catalog actions ---
 
-        providerScopes() {
-            return ['pro', 'flash', 'embedding'];
+        _extractProviderFromModel(modelPath) {
+            if (!modelPath) return null;
+            const known = ['gemini', 'openrouter', 'openai', 'anthropic', 'moonshot'];
+            const prefix = modelPath.split('/')[0];
+            return known.includes(prefix) ? prefix : null;
         },
 
-        providerTabLabel(scope) {
-            return { pro: 'Pro', flash: 'Flash', embedding: 'Embedding' }[scope] || scope;
+        _modelKeyForScope(scope) {
+            return { pro: 'proModel', flash: 'flashModel', embedding: 'embeddingModel' }[scope];
         },
 
-        providerRuntime(scope = this.provider.activeScope) {
-            return this.provider.scopes[scope];
+        _providerForScope(scope) {
+            return this._extractProviderFromModel(this.settings[this._modelKeyForScope(scope)]);
         },
 
-        providerSelected(scope = this.provider.activeScope) {
-            return this._providerEffectivePreferences(scope).selected;
+        _apiKeyForProvider(provider) {
+            if (!provider) return '';
+            return this.settings.apiKeys[provider] || '';
         },
 
-        providerBaseUrl(scope = this.provider.activeScope) {
-            return this._providerEffectivePreferences(scope).customBaseUrl;
+        _hasEnvKeyForProvider(provider) {
+            if (!provider) return false;
+            return this.appSettings.apiKeysSet[provider] || false;
         },
 
-        providerUsesShared(scope = this.provider.activeScope) {
-            return scope !== 'pro' && this.providerRuntime(scope).selected == null && this.providerRuntime(scope).baseUrl == null;
+        _catalogEntry(provider) {
+            if (!provider) return null;
+            return this.modelCatalog[provider] || null;
         },
 
-        providerScopeSummary(scope = this.provider.activeScope) {
-            if (scope === 'pro') {
-                return 'Pro is the shared provider default for Flash and Embedding unless overridden.';
-            }
-            return this.providerUsesShared(scope)
-                ? `Using Pro provider by default for ${this.providerTabLabel(scope)}.`
-                : `Using a separate provider for ${this.providerTabLabel(scope)}.`;
+        chatModelsForText(text) {
+            const provider = this._extractProviderFromModel(text);
+            const entry = this._catalogEntry(provider);
+            return entry ? (entry.chatModels || []) : [];
         },
 
-        canResetProviderOverride(scope = this.provider.activeScope) {
-            return scope !== 'pro' && !this.providerUsesShared(scope);
+        embeddingModelsForText(text) {
+            const provider = this._extractProviderFromModel(text);
+            const entry = this._catalogEntry(provider);
+            return entry ? (entry.embeddingModels || []) : [];
         },
 
-        providerChatModels(scope) {
-            return this.providerRuntime(scope).chatModels || [];
+        catalogStatusForScope(scope) {
+            const entry = this._catalogEntry(this._providerForScope(scope));
+            return entry || { status: 'unknown', message: '', detail: '', checking: false };
         },
 
-        providerEmbeddingModels(scope) {
-            return this.providerRuntime(scope).embeddingModels || [];
-        },
-
-        _providerPreferences() {
-            return {
-                activeScope: this.provider.activeScope || 'pro',
-                shared: {
-                    selected: this.provider.shared.selected || 'gemini',
-                    customBaseUrl: (this.provider.shared.baseUrl || '').trim(),
-                },
-                overrides: {
-                    flash: this._providerOverridePreferences('flash'),
-                    embedding: this._providerOverridePreferences('embedding'),
-                },
-            };
-        },
-
-        _providerOverridePreferences(scope) {
-            if (scope === 'pro') return null;
-            const state = this.providerRuntime(scope);
-            if (state.selected == null && state.baseUrl == null) return null;
-            return {
-                selected: state.selected || null,
-                customBaseUrl: (state.baseUrl || '').trim(),
-            };
-        },
-
-        _applyProviderPreferences(preferences) {
-            if (!preferences || typeof preferences !== 'object') return;
-            const shared = preferences.shared && typeof preferences.shared === 'object' ? preferences.shared : preferences;
-            this.provider.activeScope = preferences.activeScope || 'pro';
-            this.provider.shared.selected = shared.selected || 'gemini';
-            this.provider.shared.baseUrl = String(shared.customBaseUrl || '');
-
-            for (const scope of ['flash', 'embedding']) {
-                const state = this.providerRuntime(scope);
-                state.selected = null;
-                state.baseUrl = null;
-                const override = preferences.overrides && typeof preferences.overrides === 'object' ? preferences.overrides[scope] : null;
-                if (override && typeof override === 'object') {
-                    state.selected = override.selected || null;
-                    state.baseUrl = override.customBaseUrl != null ? String(override.customBaseUrl) : null;
-                    this._collapseProviderOverride(scope);
+        _baseUrlOverrides() {
+            const result = {};
+            let hasAny = false;
+            for (const scope of ['pro', 'flash', 'embedding']) {
+                const url = (this.customBaseUrls[scope] || '').trim();
+                if (url) {
+                    result[scope] = { base_url: url };
+                    hasAny = true;
                 }
             }
+            return hasAny ? result : null;
         },
 
-        _providerEffectivePreferences(scope = this.provider.activeScope) {
-            if (scope === 'pro') {
-                return {
-                    selected: this.provider.shared.selected || 'gemini',
-                    customBaseUrl: (this.provider.shared.baseUrl || '').trim(),
-                };
-            }
-            const state = this.providerRuntime(scope);
-            return {
-                selected: state.selected || this.provider.shared.selected || 'gemini',
-                customBaseUrl: ((state.baseUrl != null ? state.baseUrl : this.provider.shared.baseUrl) || '').trim(),
-            };
+        catalogMessageForText(text) {
+            const provider = this._extractProviderFromModel(text);
+            if (!provider) return null;
+            const entry = this._catalogEntry(provider);
+            if (!entry) return null;
+            if (entry.checking) return { type: 'info', text: 'Loading models...' };
+            if (entry.status === 'connected') return null;
+            if (entry.message) return { type: entry.status === 'warning' ? 'error' : 'warn', text: entry.message + (entry.detail ? ': ' + entry.detail : '') };
+            return null;
         },
 
-        _matchingProviderScopes(scope = this.provider.activeScope) {
-            const prefs = this._providerEffectivePreferences(scope);
-            return this.providerScopes().filter(candidate => {
-                const other = this._providerEffectivePreferences(candidate);
-                return other.selected === prefs.selected && other.customBaseUrl === prefs.customBaseUrl;
-            });
-        },
+        async fetchCatalog(provider) {
+            if (!provider) return;
+            const existing = this.modelCatalog[provider];
+            if (existing && existing.checking) return;
 
-        _collapseProviderOverride(scope) {
-            if (scope === 'pro') return;
-            const state = this.providerRuntime(scope);
-            const sharedSelected = this.provider.shared.selected || 'gemini';
-            const sharedBaseUrl = (this.provider.shared.baseUrl || '').trim();
-            const selected = state.selected || sharedSelected;
-            const baseUrl = (state.baseUrl || '').trim();
-            if (selected === sharedSelected && baseUrl === sharedBaseUrl) {
-                state.selected = null;
-                state.baseUrl = null;
-            }
-        },
-
-        _resetProviderStatus(scope = this.provider.activeScope, message = '') {
-            for (const candidate of this._matchingProviderScopes(scope)) {
-                const state = this.providerRuntime(candidate);
-                state._requestId = (state._requestId || 0) + 1;
-                state.status = 'unknown';
-                state.message = message;
-                state.detail = '';
-                state.chatModels = [];
-                state.embeddingModels = [];
-                state.checking = false;
-            }
-        },
-
-        _providerKeyName(scope = this.provider.activeScope) {
-            const providerName = this.providerSelected(scope);
-            return providerName === 'custom' ? 'openai' : (providerName || 'gemini');
-        },
-
-        _providerApiKey(scope = this.provider.activeScope) {
-            return this.settings.apiKeys[this._providerKeyName(scope)] || '';
-        },
-
-        _providerHasEnvKey(scope = this.provider.activeScope) {
-            return this.appSettings.apiKeysSet[this._providerKeyName(scope)] || false;
-        },
-
-        _providerCheckRequest(scope = this.provider.activeScope) {
-            const preferences = this._providerEffectivePreferences(scope);
-            const body = {
-                provider: preferences.selected,
-                api_key: this._providerApiKey(scope) || null,
-            };
-            if (preferences.selected === 'custom' && preferences.customBaseUrl) {
-                body.base_url = preferences.customBaseUrl;
-            }
-            return body;
-        },
-
-        _providerOverridesForRequest(scopes = this.providerScopes()) {
-            const providers = {};
-            for (const scope of scopes) {
-                const preferences = this._providerEffectivePreferences(scope);
-                providers[scope] = {
-                    provider: preferences.selected || null,
-                    base_url: preferences.selected === 'custom' ? (preferences.customBaseUrl || null) : null,
-                };
-            }
-            return providers;
-        },
-
-        setProviderScope(scope) {
-            this.provider.activeScope = scope;
-            this._saveToStorage();
-            const state = this.providerRuntime(scope);
-            if (!state.chatModels.length && !state.embeddingModels.length) {
-                this.checkProvider(scope);
-            }
-        },
-
-        resetProviderOverride(scope = this.provider.activeScope) {
-            if (scope === 'pro') return;
-            const state = this.providerRuntime(scope);
-            state.selected = null;
-            state.baseUrl = null;
-            this._saveToStorage();
-            this._resetProviderStatus(scope);
-            this.checkProvider(scope);
-        },
-
-        handleProviderSelectionChange(value, scope = this.provider.activeScope) {
-            if (scope === 'pro') {
-                this.provider.shared.selected = value || 'gemini';
-                if (this.provider.shared.selected !== 'custom') {
-                    this.provider.shared.baseUrl = '';
-                }
-            } else {
-                const state = this.providerRuntime(scope);
-                state.selected = value || 'gemini';
-                if (state.selected !== 'custom') {
-                    state.baseUrl = '';
-                }
-                this._collapseProviderOverride(scope);
-            }
-            this._saveToStorage();
-            this._resetProviderStatus(scope);
-            this.checkProvider(scope);
-        },
-
-        handleProviderBaseUrlInput(value, scope = this.provider.activeScope) {
-            if (scope === 'pro') {
-                this.provider.shared.baseUrl = String(value || '');
-            } else {
-                const state = this.providerRuntime(scope);
-                state.selected = state.selected || this.provider.shared.selected || 'gemini';
-                state.baseUrl = String(value || '');
-                this._collapseProviderOverride(scope);
-            }
-            this._saveToStorage();
-            this._resetProviderStatus(scope);
-            this._debounceCheckProvider(scope);
-        },
-
-        _debounceCheckProvider(scope = this.provider.activeScope) {
-            const state = this.providerRuntime(scope);
-            if (state._debounceTimer) clearTimeout(state._debounceTimer);
-            state._debounceTimer = setTimeout(() => this.checkProvider(scope), 500);
-        },
-
-        async checkAllProviders() {
-            for (const scope of this.providerScopes()) {
-                await this.checkProvider(scope);
-            }
-        },
-
-        async checkProvider(scope = this.provider.activeScope) {
-            const requestBody = this._providerCheckRequest(scope);
-            const hasEnvKey = this._providerHasEnvKey(scope);
-            const matchingScopes = this._matchingProviderScopes(scope);
-
-            if (!requestBody.api_key && !hasEnvKey) {
-                this._resetProviderStatus(scope, 'Enter API key to load models');
+            const apiKey = this._apiKeyForProvider(provider) || null;
+            const hasEnvKey = this._hasEnvKeyForProvider(provider);
+            if (!apiKey && !hasEnvKey) {
+                this.modelCatalog[provider] = { status: 'warning', message: `Set ${provider} API key in API Keys section to browse models`, detail: '', chatModels: [], embeddingModels: [], checking: false };
                 return;
             }
 
-            const requestId = (this.providerRuntime(scope)._requestId || 0) + 1;
-            for (const candidate of matchingScopes) {
-                const state = this.providerRuntime(candidate);
-                state._requestId = requestId;
-                state.checking = true;
-            }
+            this.modelCatalog[provider] = { ...(existing || {}), status: 'unknown', message: 'Loading...', detail: '', checking: true, chatModels: existing?.chatModels || [], embeddingModels: existing?.embeddingModels || [] };
 
             try {
+                const body = { provider, api_key: apiKey };
                 const resp = await fetch('/api/providers/check', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(requestBody),
+                    body: JSON.stringify(body),
                 });
                 const data = await resp.json();
-                if (!resp.ok) {
-                    throw new Error(data.detail || data.error || data.message || 'Request failed');
-                }
-                for (const candidate of matchingScopes) {
-                    const state = this.providerRuntime(candidate);
-                    if (state._requestId !== requestId) continue;
-                    state.status = data.status.state;
-                    state.message = data.status.message;
-                    state.detail = data.status.detail || '';
-                    state.chatModels = data.chat_models || [];
-                    state.embeddingModels = data.embedding_models || [];
-                }
+                if (!resp.ok) throw new Error(data.detail || data.error || data.message || 'Request failed');
+                this.modelCatalog[provider] = {
+                    status: data.status.state,
+                    message: data.status.message,
+                    detail: data.status.detail || '',
+                    chatModels: data.chat_models || [],
+                    embeddingModels: data.embedding_models || [],
+                    checking: false,
+                };
             } catch (e) {
-                for (const candidate of matchingScopes) {
-                    const state = this.providerRuntime(candidate);
-                    if (state._requestId !== requestId) continue;
-                    state.status = 'warning';
-                    state.message = 'Check failed';
-                    state.detail = e instanceof Error ? e.message : String(e);
-                    state.chatModels = [];
-                    state.embeddingModels = [];
-                }
-            } finally {
-                for (const candidate of matchingScopes) {
-                    const state = this.providerRuntime(candidate);
-                    if (state._requestId === requestId) state.checking = false;
-                }
+                this.modelCatalog[provider] = {
+                    status: 'warning',
+                    message: 'Check failed',
+                    detail: e instanceof Error ? e.message : String(e),
+                    chatModels: [],
+                    embeddingModels: [],
+                    checking: false,
+                };
+            }
+        },
+
+        async fetchAllCatalogs() {
+            const providers = new Set(
+                ['pro', 'flash', 'embedding'].map(s => this._providerForScope(s)).filter(Boolean)
+            );
+            await Promise.all([...providers].map(p => this.fetchCatalog(p)));
+        },
+
+        onModelInput(text) {
+            const provider = this._extractProviderFromModel(text);
+            if (!provider) return;
+            const entry = this._catalogEntry(provider);
+            if (!entry || (!entry.chatModels?.length && !entry.embeddingModels?.length && entry.status !== 'connected')) {
+                this.fetchCatalog(provider);
             }
         },
 
