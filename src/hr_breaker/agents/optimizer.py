@@ -3,7 +3,7 @@ from datetime import date
 from pathlib import Path
 
 from pydantic import BaseModel
-from pydantic_ai import Agent, BinaryContent
+from pydantic_ai import Agent, BinaryContent, ModelRetry
 
 from hr_breaker.agents.combined_reviewer import pdf_to_image
 from hr_breaker.config import get_model_settings, get_pro_model, get_settings
@@ -61,16 +61,13 @@ CONTENT BUDGET:
 - The ONLY authoritative check is page_count from check_content_length
 
 TOOLS:
-- Use check_content_length(html) to verify your output fits 1 page BEFORE returning
+- REQUIRED: call check_content_length(html) with your final HTML before returning — output is REJECTED if you skip this
   - Returns actual page_count from rendered PDF (authoritative)
   - Also returns character/word estimates (rough guidance only)
-- Use preview_resume(html) to see rendered PDF preview - call at least once before returning
-- If page_count > 1, trim content and check again
-- Do not return until check_content_length confirms fits_one_page=true
-
-OPTIONAL TOOLS (use when helpful):
-- check_keywords_tool(html) - Returns missing job keywords ranked by TF-IDF importance. Use if unsure about keyword coverage.
-- validate_structure(html) - Check HTML has proper headers/sections. Use after major structural changes.
+  - If page_count > 1, trim content and call again until fits_one_page=true
+- OPTIONAL: check_keywords_tool(html) - Returns missing job keywords ranked by TF-IDF importance. Use if unsure about keyword coverage.
+- OPTIONAL: validate_structure(html) - Check HTML has proper headers/sections. Use after major structural changes.
+- OPTIONAL: preview_resume(html) - Renders PDF preview image. Use to visually check layout.
 
 LINKS:
 - Preserve contacts info as in the original and never delete it
@@ -155,6 +152,10 @@ def get_optimizer_agent(
         model_settings=get_model_settings(),
     )
 
+    # Tracks check_content_length calls within this agent run.
+    # Enforced by the output_validator below.
+    _check_state: dict = {"called": False, "fits": False, "page_count": None}
+
     @agent.system_prompt
     def add_current_date() -> str:
         return f"Today's date: {date.today().strftime('%B %Y')}"
@@ -171,6 +172,8 @@ def get_optimizer_agent(
             page_count = render_result.page_count
             fits_one_page = page_count == 1
         except RenderError as e:
+            _check_state["called"] = True
+            _check_state["fits"] = False
             return {
                 "fits_one_page": False,
                 "error": f"Render failed: {e}",
@@ -180,6 +183,10 @@ def get_optimizer_agent(
                     "note": "Estimates only - fix render error first",
                 },
             }
+
+        _check_state["called"] = True
+        _check_state["fits"] = fits_one_page
+        _check_state["page_count"] = page_count
 
         result = {
             "fits_one_page": fits_one_page,
@@ -205,6 +212,22 @@ def get_optimizer_agent(
             est.words,
             fits_one_page,
         )
+        return result
+
+    @agent.output_validator
+    def enforce_length_check(result: OptimizerResult) -> OptimizerResult:
+        """Reject output if check_content_length was not called or did not pass."""
+        if not _check_state["called"]:
+            raise ModelRetry(
+                "You must call check_content_length(html) with your final HTML before returning. "
+                "Call it now to verify the resume fits one page."
+            )
+        if not _check_state["fits"]:
+            page_count = _check_state["page_count"]
+            raise ModelRetry(
+                f"check_content_length returned page_count={page_count} — the resume does not fit one page. "
+                "Trim content and call check_content_length again until fits_one_page=True, then return."
+            )
         return result
 
     @agent.tool_plain
