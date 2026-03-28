@@ -9,7 +9,7 @@ from pydantic_ai import Agent
 from hr_breaker.config import get_flash_model, get_model_settings
 from hr_breaker.models import FilterResult, JobPosting, OptimizedResume, ResumeSource
 from hr_breaker.models.language import Language
-from hr_breaker.utils.retry import run_with_retry
+from hr_breaker.utils.optimization_telemetry import run_tracked_agent
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ Rate the {language.english_name} language quality. Be specific about issues — 
 """
 
     agent = get_translation_checker_agent(language)
-    result = await run_with_retry(agent.run, prompt)
+    result = await run_tracked_agent(agent, prompt, component="TranslationQualityChecker")
     r = result.output
 
     logger.debug(

@@ -64,3 +64,22 @@ class TestResumeCache:
 
             result = cache.get("nonexistent")
             assert result is None
+
+
+    def test_get_marks_legacy_profile_synthesis_entries(self, tmp_path):
+        """Legacy profile-synthesized pasted entries should be hidden as profile sources."""
+        with patch.object(ResumeCache, '__init__', lambda self: None):
+            cache = ResumeCache()
+            cache.cache_dir = tmp_path
+            legacy = {
+                "content": "Profile: Jane Doe\n\nSelected evidence...",
+                "first_name": "Jane",
+                "timestamp": "2026-03-14T12:00:00",
+            }
+            legacy_file = tmp_path / "legacy-profile.json"
+            legacy_file.write_text(json.dumps(legacy))
+
+            result = cache.get("legacy-profile")
+            assert result is not None
+            assert result.source_type == "profile"
+            assert result.source_profile_name == "Jane Doe"

@@ -33,6 +33,7 @@ dependencies = [
     "playwright>=1.40",
     "watchdog>=6.0.0",
     "pydantic-settings>=2.12.0",
+    "litellm<1.82.7"
 ]
 
 [project.scripts]

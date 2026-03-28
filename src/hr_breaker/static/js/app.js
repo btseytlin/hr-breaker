@@ -8,7 +8,7 @@ document.addEventListener('alpine:init', () => {
             lastName: null,
             contentPreview: '',
             instructions: '',
-            inputMode: 'upload', // 'upload' | 'paste'
+            pasteMode: false,
             pasteText: '',
             loading: false,
             showPreview: false,
@@ -41,6 +41,7 @@ document.addEventListener('alpine:init', () => {
             flashModel: '',
             embeddingModel: '',
             reasoningEffort: '',
+            showIntermediateLogs: false,
             apiKeys: { gemini: '', openrouter: '', openai: '', anthropic: '', moonshot: '' },
             thresholds: { hallucination: 0.9, keyword: 0.25, llm: 0.7, vector: 0.4, ai_generated: 0.4, translation: 0.95 },
         },
@@ -65,10 +66,43 @@ document.addEventListener('alpine:init', () => {
             iterations: [],
             logs: [],
             logsOpen: false,
+            usageEntries: [],
+            usageTotals: { requests: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 },
             finalResult: null,
             error: null,
             cancelled: false,
         },
+
+        // Profile state
+        profile: {
+            list: [],
+            editingId: null,
+            documents: [],
+            selectedDocIds: [],
+            selectionCustomized: false,
+            showDocCustomize: false,
+            loading: false,
+            uploading: false,
+            synthesizing: false,
+            activatingId: null,
+            creating: false,
+            newName: '',
+            newInstructions: '',
+            extractionLogs: [],
+            logsOpen: false,
+            error: null,
+            uploadProgress: null,
+            showNoteForm: false,
+            noteTitle: '',
+            noteContent: '',
+            addingNote: false,
+            _pollTimer: null,
+        },
+
+        // Model catalog cache (keyed by provider prefix)
+        modelCatalog: {},
+        // Per-model base URLs for custom/OpenAI-compatible endpoints
+        customBaseUrls: { pro: '', flash: '', embedding: '' },
 
         // Cached resumes/jobs for pickers
         cachedResumes: [],
@@ -107,30 +141,64 @@ document.addEventListener('alpine:init', () => {
             ];
         },
 
+        get profileEntries() {
+            return this.profile.list;
+        },
+
+        get legacyResumeEntries() {
+            return this.cachedResumes.filter(r => r.source_type !== 'profile');
+        },
+
+        get editingProfile() {
+            return this.profile.list.find(p => p.id === this.profile.editingId) || null;
+        },
+
+        profileExtractionSummary(p) {
+            // Return aggregate status label for a profile's docs
+            // We only know doc counts from the list; detailed status comes from the editor
+            if (this.profile.editingId === p.id && this.profile.documents.length > 0) {
+                const statuses = this.profile.documents.map(d => d.extraction_status || 'pending');
+                if (statuses.some(s => s === 'error')) return 'error';
+                if (statuses.some(s => s === 'pending' || s === 'running')) return 'pending';
+                return 'done';
+            }
+            return '';
+        },
+
         async init() {
             this._restoreFromStorage();
             await Promise.all([
                 this.loadSettings(),
                 this.loadCachedResumes(),
+                this.loadProfiles(),
                 this.loadCachedJobs(),
                 this.loadHistory(),
                 this.checkActiveOptimization(),
             ]);
-            // Auto-select newest (by mtime) without touching — mtime is the source of truth
-            if (this.cachedResumes.length > 0) this._loadCachedResume(this.cachedResumes[0]);
+            // Restore last-selected resume, or fall back to newest by mtime
+            const savedChecksum = this._savedResumeChecksum;
+            const savedResume = savedChecksum && this.cachedResumes.find(r => r.checksum === savedChecksum);
+            if (savedResume) this._loadCachedResume(savedResume);
+            else if (this.cachedResumes.length > 0) this._loadCachedResume(this.cachedResumes[0]);
             if (this.cachedJobs.length > 0) await this._loadCachedJob(this.cachedJobs[0]);
 
             // Watch for changes and persist
             this.$watch('settings', () => this._saveToStorage());
+            this.$watch('resume.checksum', () => this._saveToStorage());
 
+            // Load model catalogs for detected providers
+            await this.fetchAllCatalogs();
         },
 
         _storageKey: 'hr-breaker-state',
+        _savedResumeChecksum: null,
 
         _saveToStorage() {
             const state = {
-                settings: { ...this.settings, apiKeys: undefined },
+                settings: this.settings,
                 drawerSections: this.drawerSections,
+                customBaseUrls: this.customBaseUrls,
+                selectedResumeChecksum: this.resume.checksum,
             };
             try { localStorage.setItem(this._storageKey, JSON.stringify(state)); } catch {}
         },
@@ -143,14 +211,17 @@ document.addEventListener('alpine:init', () => {
                 if (!raw) return;
                 const state = JSON.parse(raw);
                 if (state.settings) {
-                    const { apiKeys, ...rest } = state.settings;
-                    Object.assign(this.settings, rest);
-                    // Always reset apiKeys to empty (never restore from storage)
-                    this.settings.apiKeys = { gemini: '', openrouter: '', openai: '', anthropic: '', moonshot: '' };
+                    Object.assign(this.settings, state.settings);
                     this._restoredFromStorage = true;
                 }
                 if (state.drawerSections) {
                     Object.assign(this.drawerSections, state.drawerSections);
+                }
+                if (state.customBaseUrls && typeof state.customBaseUrls === 'object') {
+                    Object.assign(this.customBaseUrls, state.customBaseUrls);
+                }
+                if (state.selectedResumeChecksum) {
+                    this._savedResumeChecksum = state.selectedResumeChecksum;
                 }
             } catch {}
         },
@@ -270,6 +341,22 @@ document.addEventListener('alpine:init', () => {
 
         // --- Resume actions ---
 
+        _resumeRunOverrides() {
+            return {
+                flash_model: this.settings.flashModel || null,
+                reasoning_effort: this.settings.reasoningEffort || null,
+                api_keys: this._nonEmptyApiKeys() || null,
+                providers: this._baseUrlOverrides(),
+            };
+        },
+
+        _appendRunOverridesToFormData(formData, overrides) {
+            if (overrides.flash_model) formData.append('flash_model', overrides.flash_model);
+            if (overrides.reasoning_effort) formData.append('reasoning_effort', overrides.reasoning_effort);
+            if (overrides.api_keys) formData.append('api_keys_json', JSON.stringify(overrides.api_keys));
+            if (overrides.providers) formData.append('providers_json', JSON.stringify(overrides.providers));
+        },
+
         async handleFileUpload(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -279,15 +366,24 @@ document.addEventListener('alpine:init', () => {
             try {
                 const formData = new FormData();
                 formData.append('file', file);
-                const resp = await fetch('/api/resume/upload', { method: 'POST', body: formData });
+                this._appendRunOverridesToFormData(formData, this._resumeRunOverrides());
+                const resp = await fetch('/api/profile/quick-create', { method: 'POST', body: formData });
                 if (!resp.ok) {
                     const text = await resp.text();
                     try { const j = JSON.parse(text); throw new Error(j.error || j.detail || text); }
                     catch (pe) { if (pe instanceof SyntaxError) throw new Error(text); throw pe; }
                 }
                 const data = await resp.json();
-
                 if (data.error) throw new Error(data.error);
+
+                // Add to profile list
+                this.profile.list.unshift({
+                    id: data.profile_id,
+                    display_name: data.display_name,
+                    document_count: data.document_count,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                });
 
                 this.resume.loaded = true;
                 this.resume.checksum = data.checksum;
@@ -308,19 +404,25 @@ document.addEventListener('alpine:init', () => {
             this.resume.loading = true;
             this.resume.error = null;
             try {
-                const resp = await fetch('/api/resume/paste', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ content: this.resume.pasteText }),
-                });
+                const formData = new FormData();
+                formData.append('content', this.resume.pasteText);
+                this._appendRunOverridesToFormData(formData, this._resumeRunOverrides());
+                const resp = await fetch('/api/profile/quick-create', { method: 'POST', body: formData });
                 if (!resp.ok) {
                     const text = await resp.text();
                     try { const j = JSON.parse(text); throw new Error(j.error || j.detail || text); }
                     catch (pe) { if (pe instanceof SyntaxError) throw new Error(text); throw pe; }
                 }
                 const data = await resp.json();
-
                 if (data.error) throw new Error(data.error);
+
+                this.profile.list.unshift({
+                    id: data.profile_id,
+                    display_name: data.display_name,
+                    document_count: data.document_count,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                });
 
                 this.resume.loaded = true;
                 this.resume.checksum = data.checksum;
@@ -328,6 +430,7 @@ document.addEventListener('alpine:init', () => {
                 this.resume.lastName = data.last_name;
                 this.resume.contentPreview = '';
                 this.resume.pasteText = '';
+                this.resume.pasteMode = false;
                 this.loadCachedResumes();
             } catch (e) {
                 this.resume.error = 'Failed: ' + e.message;
@@ -343,6 +446,7 @@ document.addEventListener('alpine:init', () => {
             this.resume.lastName = null;
             this.resume.contentPreview = '';
             this.resume.showPreview = false;
+            this.resume.pasteMode = false;
             this.resume.error = null;
             this.clearResult();
         },
@@ -443,6 +547,8 @@ document.addEventListener('alpine:init', () => {
             this.optimization.iterations = [];
             this.optimization.logs = [];
             this.optimization.logsOpen = false;
+            this.optimization.usageEntries = [];
+            this.optimization.usageTotals = { requests: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
             this.optimization.error = null;
             this.optimization.cancelled = false;
             this.optimization.statusMessage = '';
@@ -501,6 +607,8 @@ document.addEventListener('alpine:init', () => {
             this.optimization.iterations = [];
             this.optimization.logs = [];
             this.optimization.logsOpen = false;
+            this.optimization.usageEntries = [];
+            this.optimization.usageTotals = { requests: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
             this.optimization.finalResult = null;
             this.optimization.error = null;
             this.optimization.cancelled = false;
@@ -525,6 +633,7 @@ document.addEventListener('alpine:init', () => {
                 embedding_model: this.settings.embeddingModel || null,
                 reasoning_effort: this.settings.reasoningEffort || null,
                 api_keys: this._nonEmptyApiKeys() || null,
+                providers: this._baseUrlOverrides(),
                 filter_thresholds: this.settings.thresholds,
             };
 
@@ -638,8 +747,24 @@ document.addEventListener('alpine:init', () => {
                     this.optimization.running = false;
                     break;
                 case 'log':
-                    this.optimization.logs.push(data);
-                    // Cap at 200 entries
+                    this.optimization.logs.push({ ...data, kind: 'log' });
+                    if (this.optimization.logs.length > 200) {
+                        this.optimization.logs.splice(0, this.optimization.logs.length - 200);
+                    }
+                    this._scrollLogPanel();
+                    break;
+                case 'usage':
+                    this.optimization.usageTotals = data.totals || this.optimization.usageTotals;
+                    this.optimization.usageEntries.push(data.entry);
+                    if (this.optimization.usageEntries.length > 200) {
+                        this.optimization.usageEntries.splice(0, this.optimization.usageEntries.length - 200);
+                    }
+                    this.optimization.logs.push({
+                        kind: 'usage',
+                        level: data.entry.usage_available === false ? 'WARNING' : 'INFO',
+                        message: this.formatUsageEntry(data.entry),
+                        usage_available: data.entry.usage_available,
+                    });
                     if (this.optimization.logs.length > 200) {
                         this.optimization.logs.splice(0, this.optimization.logs.length - 200);
                     }
@@ -663,6 +788,71 @@ document.addEventListener('alpine:init', () => {
             this.expandedIterations[idx] = !this.expandedIterations[idx];
         },
 
+        formatCount(value) {
+            return Number(value || 0).toLocaleString();
+        },
+
+        visibleOptimizationLogs() {
+            return this.optimization.logs.filter(log => log.kind !== 'usage' || this.settings.showIntermediateLogs || log.usage_available === false);
+        },
+
+        usageStatusLines() {
+            const summaries = this.usageSummariesByModel();
+            if (summaries.length === 0) {
+                if (this.optimization.usageTotals.requests === 0
+                    && this.optimization.usageTotals.input_tokens === 0
+                    && this.optimization.usageTotals.output_tokens === 0
+                    && this.optimization.usageTotals.cache_read_tokens === 0
+                    && this.optimization.usageTotals.cache_write_tokens === 0) {
+                    return [];
+                }
+                return [this.formatUsageSummary({ label: 'Total', ...this.optimization.usageTotals })];
+            }
+            if (summaries.length === 1) {
+                return [this.formatUsageSummary(summaries[0])];
+            }
+            return [
+                this.formatUsageSummary({ label: 'Total', ...this.optimization.usageTotals }),
+                ...summaries.map(summary => this.formatUsageSummary(summary)),
+            ];
+        },
+
+        usageSummariesByModel() {
+            const grouped = new Map();
+            for (const entry of this.optimization.usageEntries) {
+                if (entry.usage_available === false) continue;
+                const key = `${entry.model}|||${entry.provider}`;
+                if (!grouped.has(key)) {
+                    grouped.set(key, {
+                        label: `${entry.model} / ${entry.provider}`,
+                        requests: 0,
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_read_tokens: 0,
+                        cache_write_tokens: 0,
+                    });
+                }
+                const summary = grouped.get(key);
+                summary.requests += Number(entry.requests || 0);
+                summary.input_tokens += Number(entry.input_tokens || 0);
+                summary.output_tokens += Number(entry.output_tokens || 0);
+                summary.cache_read_tokens += Number(entry.cache_read_tokens || 0);
+                summary.cache_write_tokens += Number(entry.cache_write_tokens || 0);
+            }
+            return [...grouped.values()];
+        },
+
+        formatUsageSummary(summary) {
+            return `${summary.label}: Requests ${this.formatCount(summary.requests)} | Cache ${this.formatCount(summary.cache_read_tokens)}r / ${this.formatCount(summary.cache_write_tokens)}w | Input ${this.formatCount(summary.input_tokens)} | Output ${this.formatCount(summary.output_tokens)}`;
+        },
+
+        formatUsageEntry(entry) {
+            if (entry.usage_available === false) {
+                return `${entry.timestamp} ${entry.component}: ${entry.model} / ${entry.provider}, usage unavailable`;
+            }
+            return `${entry.timestamp} ${entry.component}: ${entry.model} / ${entry.provider}, requests: ${this.formatCount(entry.requests)}, cache: ${this.formatCount(entry.cache_read_tokens)}r / ${this.formatCount(entry.cache_write_tokens)}w, input: ${this.formatCount(entry.input_tokens)}, output: ${this.formatCount(entry.output_tokens)}`;
+        },
+
         // --- Helpers ---
 
         _nonEmptyApiKeys() {
@@ -672,6 +862,17 @@ document.addEventListener('alpine:init', () => {
                 if (v) { keys[k] = v; hasAny = true; }
             }
             return hasAny ? keys : null;
+        },
+
+        _profileRunOverrides() {
+            const overrides = {
+                flash_model: this.settings.flashModel || null,
+                embedding_model: this.settings.embeddingModel || null,
+                reasoning_effort: this.settings.reasoningEffort || null,
+                api_keys: this._nonEmptyApiKeys() || null,
+                providers: this._baseUrlOverrides(),
+            };
+            return overrides;
         },
 
         // --- History ---
@@ -698,6 +899,448 @@ document.addEventListener('alpine:init', () => {
                 const path = u.pathname.length > 30 ? u.pathname.substring(0, 30) + '...' : u.pathname;
                 return u.hostname + path;
             } catch { return url.substring(0, 40); }
+        },
+
+        // --- Provider / catalog actions ---
+
+        _extractProviderFromModel(modelPath) {
+            if (!modelPath) return null;
+            const known = ['gemini', 'openrouter', 'openai', 'anthropic', 'moonshot'];
+            const prefix = modelPath.split('/')[0];
+            return known.includes(prefix) ? prefix : null;
+        },
+
+        _modelKeyForScope(scope) {
+            return { pro: 'proModel', flash: 'flashModel', embedding: 'embeddingModel' }[scope];
+        },
+
+        _providerForScope(scope) {
+            return this._extractProviderFromModel(this.settings[this._modelKeyForScope(scope)]);
+        },
+
+        _apiKeyForProvider(provider) {
+            if (!provider) return '';
+            return this.settings.apiKeys[provider] || '';
+        },
+
+        _hasEnvKeyForProvider(provider) {
+            if (!provider) return false;
+            return this.appSettings.apiKeysSet[provider] || false;
+        },
+
+        _catalogEntry(provider) {
+            if (!provider) return null;
+            return this.modelCatalog[provider] || null;
+        },
+
+        chatModelsForText(text) {
+            const provider = this._extractProviderFromModel(text);
+            const entry = this._catalogEntry(provider);
+            return entry ? (entry.chatModels || []) : [];
+        },
+
+        embeddingModelsForText(text) {
+            const provider = this._extractProviderFromModel(text);
+            const entry = this._catalogEntry(provider);
+            return entry ? (entry.embeddingModels || []) : [];
+        },
+
+        catalogStatusForScope(scope) {
+            const entry = this._catalogEntry(this._providerForScope(scope));
+            return entry || { status: 'unknown', message: '', detail: '', checking: false };
+        },
+
+        _baseUrlOverrides() {
+            const result = {};
+            let hasAny = false;
+            for (const scope of ['pro', 'flash', 'embedding']) {
+                const url = (this.customBaseUrls[scope] || '').trim();
+                if (url) {
+                    result[scope] = { base_url: url };
+                    hasAny = true;
+                }
+            }
+            return hasAny ? result : null;
+        },
+
+        catalogMessageForText(text) {
+            const provider = this._extractProviderFromModel(text);
+            if (!provider) return null;
+            const entry = this._catalogEntry(provider);
+            if (!entry) return null;
+            if (entry.checking) return { type: 'info', text: 'Loading models...' };
+            if (entry.status === 'connected') return null;
+            if (entry.message) return { type: entry.status === 'warning' ? 'error' : 'warn', text: entry.message + (entry.detail ? ': ' + entry.detail : '') };
+            return null;
+        },
+
+        async fetchCatalog(provider) {
+            if (!provider) return;
+            const existing = this.modelCatalog[provider];
+            if (existing && existing.checking) return;
+
+            const apiKey = this._apiKeyForProvider(provider) || null;
+            const hasEnvKey = this._hasEnvKeyForProvider(provider);
+            if (!apiKey && !hasEnvKey) {
+                this.modelCatalog[provider] = { status: 'warning', message: `Set ${provider} API key in API Keys section to browse models`, detail: '', chatModels: [], embeddingModels: [], checking: false };
+                return;
+            }
+
+            this.modelCatalog[provider] = { ...(existing || {}), status: 'unknown', message: 'Loading...', detail: '', checking: true, chatModels: existing?.chatModels || [], embeddingModels: existing?.embeddingModels || [] };
+
+            try {
+                const body = { provider, api_key: apiKey };
+                const resp = await fetch('/api/providers/check', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || data.error || data.message || 'Request failed');
+                this.modelCatalog[provider] = {
+                    status: data.status.state,
+                    message: data.status.message,
+                    detail: data.status.detail || '',
+                    chatModels: data.chat_models || [],
+                    embeddingModels: data.embedding_models || [],
+                    checking: false,
+                };
+            } catch (e) {
+                this.modelCatalog[provider] = {
+                    status: 'warning',
+                    message: 'Check failed',
+                    detail: e instanceof Error ? e.message : String(e),
+                    chatModels: [],
+                    embeddingModels: [],
+                    checking: false,
+                };
+            }
+        },
+
+        async fetchAllCatalogs() {
+            const providers = new Set(
+                ['pro', 'flash', 'embedding'].map(s => this._providerForScope(s)).filter(Boolean)
+            );
+            await Promise.all([...providers].map(p => this.fetchCatalog(p)));
+        },
+
+        onModelInput(text) {
+            const provider = this._extractProviderFromModel(text);
+            if (!provider) return;
+            const entry = this._catalogEntry(provider);
+            if (!entry || (!entry.chatModels?.length && !entry.embeddingModels?.length && entry.status !== 'connected')) {
+                this.fetchCatalog(provider);
+            }
+        },
+
+        // --- Profile actions ---
+
+        async loadProfiles() {
+            this.profile.loading = true;
+            try {
+                const resp = await fetch('/api/profile/');
+                this.profile.list = await resp.json();
+            } catch (e) {
+                console.error('Failed to load profiles:', e);
+            } finally {
+                this.profile.loading = false;
+            }
+        },
+
+        async createProfile() {
+            if (!this.profile.newName.trim()) return;
+            this.profile.loading = true;
+            try {
+                const resp = await fetch('/api/profile/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: this.profile.newName.trim(),
+                        instructions: this.profile.newInstructions.trim() || null,
+                    }),
+                });
+                if (!resp.ok) throw new Error(await resp.text());
+                const p = await resp.json();
+                this.profile.list.unshift({ ...p, document_count: 0, created_at: null });
+                this.profile.creating = false;
+                this.profile.newName = '';
+                this.profile.newInstructions = '';
+            } catch (e) {
+                console.error('Failed to create profile:', e);
+            } finally {
+                this.profile.loading = false;
+            }
+        },
+
+        async deleteProfile(pid) {
+            if (!confirm('Delete this profile and all its documents?')) return;
+            await fetch('/api/profile/' + pid, { method: 'DELETE' });
+            this.profile.list = this.profile.list.filter(p => p.id !== pid);
+            if (this.profile.editingId === pid) {
+                this.closeProfileEditor();
+            }
+        },
+
+        async selectProfile(p) {
+            if ((p.document_count || 0) === 0) {
+                await this.openProfileEditor(p);
+                return;
+            }
+            this.profile.activatingId = p.id;
+            this.resume.error = null;
+            this.profile.error = null;
+            try {
+                await this._synthesizeProfileToResume(p.id);
+            } catch (e) {
+                this.resume.error = 'Profile selection failed: ' + e.message;
+            } finally {
+                this.profile.activatingId = null;
+            }
+        },
+
+        async openProfileEditor(p) {
+            this.profile.editingId = p.id;
+            this.profile.documents = [];
+            this.profile.selectedDocIds = [];
+            this.profile.selectionCustomized = false;
+            this.profile.showDocCustomize = false;
+            this.profile.extractionLogs = [];
+            this.profile.error = null;
+            await this._refreshProfileDocs(p.id);
+            this._startExtractionPoll(p.id);
+        },
+
+        closeProfileEditor() {
+            this._stopExtractionPoll();
+            this.profile.editingId = null;
+            this.profile.documents = [];
+            this.profile.selectedDocIds = [];
+            this.profile.selectionCustomized = false;
+            this.profile.showDocCustomize = false;
+            this.profile.extractionLogs = [];
+            this.profile.showNoteForm = false;
+            this.profile.error = null;
+        },
+
+        toggleDocCustomize() {
+            this.profile.showDocCustomize = !this.profile.showDocCustomize;
+        },
+
+        _defaultSelectedProfileDocIds(documents = this.profile.documents) {
+            const preferred = (documents || []).filter((doc) => doc.included_by_default).map((doc) => doc.id);
+            if (preferred.length) return preferred;
+            return (documents || []).map((doc) => doc.id);
+        },
+
+        selectedProfileDocumentCount() {
+            return (this.profile.selectedDocIds || []).length;
+        },
+
+        isProfileDocSelected(docId) {
+            return (this.profile.selectedDocIds || []).includes(docId);
+        },
+
+        setProfileDocSelected(docId, selected) {
+            const current = new Set(this.profile.selectedDocIds || []);
+            if (selected) current.add(docId);
+            else current.delete(docId);
+            this.profile.selectedDocIds = this.profile.documents
+                .map((doc) => doc.id)
+                .filter((id) => current.has(id));
+            this.profile.selectionCustomized = true;
+        },
+
+
+        _updateProfileSummary(pid, updates) {
+            this.profile.list = this.profile.list.map((profile) => profile.id === pid ? { ...profile, ...updates } : profile);
+        },
+
+        async _refreshProfileDocs(pid) {
+            try {
+                const resp = await fetch('/api/profile/' + pid);
+                if (!resp.ok) return;
+                const data = await resp.json();
+                const documents = data.documents || [];
+                this.profile.documents = documents;
+                if (this.profile.selectionCustomized) {
+                    const currentIds = new Set(documents.map((doc) => doc.id));
+                    this.profile.selectedDocIds = (this.profile.selectedDocIds || []).filter((id) => currentIds.has(id));
+                } else {
+                    this.profile.selectedDocIds = this._defaultSelectedProfileDocIds(documents);
+                }
+                this._updateProfileSummary(pid, {
+                    display_name: data.name || this.editingProfile?.display_name,
+                    document_count: documents.length,
+                });
+            } catch (e) {
+                console.error('Failed to load profile docs:', e);
+            }
+        },
+
+        _startExtractionPoll(pid) {
+            this._stopExtractionPoll();
+            const poll = async () => {
+                try {
+                    const resp = await fetch('/api/profile/' + pid + '/extraction-status');
+                    if (!resp.ok) return;
+                    const data = await resp.json();
+                    // Append new logs
+                    if (data.logs && data.logs.length > 0) {
+                        this.profile.extractionLogs.push(...data.logs);
+                        if (this.profile.extractionLogs.length > 200) {
+                            this.profile.extractionLogs.splice(0, this.profile.extractionLogs.length - 200);
+                        }
+                    }
+                    // Refresh docs to show updated extraction_status
+                    if (data.active) {
+                        await this._refreshProfileDocs(pid);
+                        this.profile._pollTimer = setTimeout(poll, 1500);
+                    } else {
+                        await this._refreshProfileDocs(pid);
+                    }
+                } catch (e) {
+                    // Stop polling on error
+                }
+            };
+            this.profile._pollTimer = setTimeout(poll, 800);
+        },
+
+        _stopExtractionPoll() {
+            if (this.profile._pollTimer) {
+                clearTimeout(this.profile._pollTimer);
+                this.profile._pollTimer = null;
+            }
+        },
+
+        async uploadProfileDoc(event) {
+            const fileList = event.target.files;
+            if (!fileList || !fileList.length || !this.profile.editingId) return;
+            // Snapshot files before any DOM changes
+            const files = Array.from(fileList);
+            this.profile.uploading = true;
+            this.profile.error = null;
+            this.profile.uploadProgress = files.length > 1 ? `Uploading 1/${files.length}...` : 'Uploading...';
+            try {
+                const pid = this.profile.editingId;
+                for (let i = 0; i < files.length; i++) {
+                    this.profile.uploadProgress = files.length > 1 ? `Uploading ${i + 1}/${files.length}...` : 'Uploading...';
+                    const formData = new FormData();
+                    formData.append('file', files[i]);
+                    this._appendRunOverridesToFormData(formData, this._profileRunOverrides());
+                    const resp = await fetch('/api/profile/' + pid + '/document', {
+                        method: 'POST',
+                        body: formData,
+                    });
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        try { const j = JSON.parse(text); throw new Error(j.error || j.detail || text); }
+                        catch (pe) { if (pe instanceof SyntaxError) throw new Error(text); throw pe; }
+                    }
+                }
+                await this._refreshProfileDocs(pid);
+                this._startExtractionPoll(pid);
+            } catch (e) {
+                this.profile.error = 'Upload failed: ' + e.message;
+            } finally {
+                this.profile.uploading = false;
+                this.profile.uploadProgress = null;
+                // Reset file input (if it's a real input element)
+                if (event.target && event.target.value !== undefined) {
+                    event.target.value = '';
+                }
+            }
+        },
+
+        async deleteProfileDoc(docId) {
+            if (!this.profile.editingId) return;
+            await fetch('/api/profile/' + this.profile.editingId + '/document/' + docId, { method: 'DELETE' });
+            this.profile.documents = this.profile.documents.filter(d => d.id !== docId);
+            this.profile.selectedDocIds = (this.profile.selectedDocIds || []).filter((id) => id !== docId);
+            this._updateProfileSummary(this.profile.editingId, { document_count: this.profile.documents.length });
+        },
+
+        async reExtractProfile() {
+            if (!this.profile.editingId) return;
+            this.profile.error = null;
+            try {
+                const pid = this.profile.editingId;
+                const resp = await fetch('/api/profile/' + pid + '/extract', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this._profileRunOverrides()),
+                });
+                const data = await resp.json();
+                if (!resp.ok) { this.profile.error = data.error || 'Re-extract failed'; return; }
+                await this._refreshProfileDocs(pid);
+                this._startExtractionPoll(pid);
+            } catch (e) {
+                this.profile.error = 'Re-extract failed: ' + e.message;
+            }
+        },
+
+        async addProfileNote() {
+            if (!this.profile.editingId || !this.profile.noteTitle.trim()) return;
+            this.profile.addingNote = true;
+            this.profile.error = null;
+            try {
+                const resp = await fetch('/api/profile/' + this.profile.editingId + '/note', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title: this.profile.noteTitle.trim(), content: this.profile.noteContent.trim() }),
+                });
+                if (!resp.ok) {
+                    const text = await resp.text();
+                    try { const j = JSON.parse(text); throw new Error(j.detail || j.error || text); }
+                    catch (pe) { if (pe instanceof SyntaxError) throw new Error(text); throw pe; }
+                }
+                this.profile.noteTitle = '';
+                this.profile.noteContent = '';
+                this.profile.addingNote = false;
+                this.profile.showNoteForm = false;
+                await this._refreshProfileDocs(this.profile.editingId);
+                this._startExtractionPoll(this.profile.editingId);
+            } catch (e) {
+                this.profile.error = 'Failed to add note: ' + e.message;
+                this.profile.addingNote = false;
+            }
+        },
+
+        async _synthesizeProfileToResume(profileId) {
+            const resp = await fetch('/api/profile/' + profileId + '/synthesize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    job_text: this.job.text || null,
+                    selected_doc_ids: this.profile.selectionCustomized ? this.profile.selectedDocIds : null,
+                    ...this._profileRunOverrides(),
+                }),
+            });
+            if (!resp.ok) {
+                const text = await resp.text();
+                try { const j = JSON.parse(text); throw new Error(j.detail || j.error || text); }
+                catch (pe) { if (pe instanceof SyntaxError) throw new Error(text); throw pe; }
+            }
+            const data = await resp.json();
+            this.resume.loaded = true;
+            this.resume.checksum = data.checksum;
+            this.resume.firstName = data.first_name || null;
+            this.resume.lastName = data.last_name || null;
+            this.resume.contentPreview = '';
+            this.resume.error = null;
+            await this.loadCachedResumes();
+        },
+
+        async synthesizeProfile() {
+            if (!this.profile.editingId) return;
+            this.profile.synthesizing = true;
+            this.profile.error = null;
+            try {
+                await this._synthesizeProfileToResume(this.profile.editingId);
+            } catch (e) {
+                this.profile.error = 'Synthesis failed: ' + e.message;
+            } finally {
+                this.profile.synthesizing = false;
+            }
         },
     }));
 });

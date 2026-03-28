@@ -84,3 +84,12 @@ async def test_run_with_retry_retries_litellm_rate_limit():
     result = await run_with_retry(func, "arg1")
     assert result == "ok"
     assert func.call_count == 2
+
+
+def test_is_retryable_false_for_litellm_none_type_config_error():
+    exc = ModelHTTPError(
+        status_code=500,
+        model_name="openai/gpt-5.3-codex",
+        body="litellm.APIConnectionError: APIConnectionError: OpenAIException - argument of type 'NoneType' is not iterable",
+    )
+    assert is_retryable(exc) is False

@@ -3,7 +3,7 @@ from datetime import date
 from pathlib import Path
 
 from pydantic import BaseModel
-from pydantic_ai import Agent, BinaryContent
+from pydantic_ai import Agent, BinaryContent, ModelRetry
 
 from hr_breaker.agents.combined_reviewer import pdf_to_image
 from hr_breaker.config import get_model_settings, get_pro_model, get_settings
@@ -19,7 +19,7 @@ from hr_breaker.models.language import Language
 from hr_breaker.services.length_estimator import estimate_content_length
 from hr_breaker.services.renderer import HTMLRenderer, RenderError
 from hr_breaker.utils import extract_text_from_html
-from hr_breaker.utils.retry import run_with_retry
+from hr_breaker.utils.optimization_telemetry import run_tracked_agent
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,9 @@ CONTENT RULES:
 - Add a summary section highlighting the most relevant experiences.
 - Try to preserve the original writing style if possible.
 - Avoid leaving an empty space at the bottom of the page if you have useful content to fill.
+- PROJECTS: Only include projects directly relevant to this job. Skip projects already listed under Publications. If no projects are relevant, omit the section entirely.
+- PUBLICATIONS: Always use "PUBLICATIONS" (plural) as the section title, even for a single item.
+- EDUCATION: By default include only the most recent / highest degree. Include multiple degrees only if they are both relevant to the role.
 
 {content_rules}
 
@@ -58,21 +61,32 @@ CONTENT BUDGET:
 - The ONLY authoritative check is page_count from check_content_length
 
 TOOLS:
-- Use check_content_length(html) to verify your output fits 1 page BEFORE returning
+- REQUIRED: call check_content_length(html) with your final HTML before returning — output is REJECTED if you skip this
   - Returns actual page_count from rendered PDF (authoritative)
   - Also returns character/word estimates (rough guidance only)
-- Use preview_resume(html) to see rendered PDF preview - call at least once before returning
-- If page_count > 1, trim content and check again
-- Do not return until check_content_length confirms fits_one_page=true
-
-OPTIONAL TOOLS (use when helpful):
-- check_keywords_tool(html) - Returns missing job keywords ranked by TF-IDF importance. Use if unsure about keyword coverage.
-- validate_structure(html) - Check HTML has proper headers/sections. Use after major structural changes.
+  - If page_count > 1, trim content and call again until fits_one_page=true
+- OPTIONAL: check_keywords_tool(html) - Returns missing job keywords ranked by TF-IDF importance. Use if unsure about keyword coverage.
+- OPTIONAL: validate_structure(html) - Check HTML has proper headers/sections. Use after major structural changes.
+- OPTIONAL: preview_resume(html) - Renders PDF preview image. Use to visually check layout.
 
 LINKS:
 - Preserve contacts info as in the original and never delete it
 - Preserve URLs from the original resume (email, LinkedIn, GitHub, website, project links)
-- Use full URLs (include https://) for all links
+- Use full URLs (include https://) in the href attribute of every <a> tag
+- Link display text must NOT start with https:// or http:// — show just the domain+path (e.g. linkedin.com/in/username, github.com/username)
+
+PUBLICATIONS:
+- Always append the DOI in parentheses at the end if available, e.g. "Author et al., Title, Venue Year (DOI: 10.xxxx/xxxx)"
+
+PROFILE SOURCE (when input contains "## Contact" or "## Source documents ranked by relevance"):
+- The input is a MERGED PROFILE from multiple documents — it contains more content than one resume
+- "Candidate name:" field → use as the resume H1 name (first + last name)
+- "## Contact" → copy these fields ONLY into the header contact line (email, phone, LinkedIn, GitHub, website)
+- "## Additional links" → these are reference links for inline use in projects/publications, NOT for the header
+- "## Source documents ranked by relevance" → use to decide which experiences to highlight and trim
+- Be selective: include only the 3-5 most relevant experience entries for this specific job
+- Summary: 2-3 sentences maximum, tightly focused on this specific role
+- You MUST trim aggressively to fit one page — call check_content_length early and cut ruthlessly
 
 {resume_guide}
 """
@@ -84,10 +98,10 @@ ALLOWED:
 - Rephrasing metrics with same values: "1% - 10%" -> "1-10%"
 - Reordering and emphasizing existing content
 - Using content that is commented out and making it visible
-- You CAN use <style> tags if you need custom styling beyond the provided classes 
+- You CAN use <style> tags if you need custom styling beyond the provided classes
 
 STRICT RULES - NEVER VIOLATE:
-- Only add specific technologies, products, or platforms not in original (e.g. "Amazon Bedrock", "LangChain", "Pinecone") they can be justified (user has experience with PostgreSQL -> maybe they are familiar with MySQL too) and ONLY IF there is no other way to increase fit 
+- NEVER add specific named products or platforms absent from the original (e.g. "Amazon Bedrock", "LangChain", "Pinecone") unless they are a direct, obvious companion to something explicitly present (e.g. PostgreSQL user → may know MySQL) AND there is no other way to improve fit
 - NEVER fabricate job titles, companies, degrees, certifications, or achievements
 - NEVER invent metrics, numbers and achievements not in original
 - DO NOT drop work experience or achievements (publications, patents, awards, etc.) unless they decrease fit
@@ -105,7 +119,7 @@ ALLOWED:
 - Rephrasing metrics with same values: "1% - 10%" -> "1-10%"
 - Reordering and emphasizing existing content
 - Using content that is commented out and making it visible
-- You CAN use <style> tags if you need custom styling beyond the provided classes 
+- You CAN use <style> tags if you need custom styling beyond the provided classes
 
 STRICT RULES - NEVER VIOLATE:
 - NEVER fabricate job titles, companies, degrees, certifications, or achievements
@@ -138,6 +152,10 @@ def get_optimizer_agent(
         model_settings=get_model_settings(),
     )
 
+    # Tracks check_content_length calls within this agent run.
+    # Enforced by the output_validator below.
+    _check_state: dict = {"called": False, "fits": False, "page_count": None}
+
     @agent.system_prompt
     def add_current_date() -> str:
         return f"Today's date: {date.today().strftime('%B %Y')}"
@@ -154,6 +172,8 @@ def get_optimizer_agent(
             page_count = render_result.page_count
             fits_one_page = page_count == 1
         except RenderError as e:
+            _check_state["called"] = True
+            _check_state["fits"] = False
             return {
                 "fits_one_page": False,
                 "error": f"Render failed: {e}",
@@ -163,6 +183,10 @@ def get_optimizer_agent(
                     "note": "Estimates only - fix render error first",
                 },
             }
+
+        _check_state["called"] = True
+        _check_state["fits"] = fits_one_page
+        _check_state["page_count"] = page_count
 
         result = {
             "fits_one_page": fits_one_page,
@@ -188,6 +212,22 @@ def get_optimizer_agent(
             est.words,
             fits_one_page,
         )
+        return result
+
+    @agent.output_validator
+    def enforce_length_check(result: OptimizerResult) -> OptimizerResult:
+        """Reject output if check_content_length was not called or did not pass."""
+        if not _check_state["called"]:
+            raise ModelRetry(
+                "You must call check_content_length(html) with your final HTML before returning. "
+                "Call it now to verify the resume fits one page."
+            )
+        if not _check_state["fits"]:
+            page_count = _check_state["page_count"]
+            raise ModelRetry(
+                f"check_content_length returned page_count={page_count} — the resume does not fit one page. "
+                "Trim content and call check_content_length again until fits_one_page=True, then return."
+            )
         return result
 
     @agent.tool_plain
@@ -271,12 +311,6 @@ Generate the resume HTML in {language.english_name} language.
 - Use accepted {language.english_name} equivalents where they exist and are commonly used
 - Text often expands in {language.english_name} vs English — compensate with concise phrasing, shorter synonyms, or abbreviations accepted in {language.english_name} professional context. Do NOT drop content — condense wording instead.
 """
-    else:
-        prompt += """
-## TARGET LANGUAGE: English
-
-Generate the resume HTML in English. Even if the job posting is in another language, the resume MUST be in English.
-"""
 
     if context.last_attempt:
         estimate = estimate_content_length(context.last_attempt)
@@ -313,7 +347,7 @@ Output ONLY valid JSON. The html field should contain the raw HTML string.
 """
 
     agent = get_optimizer_agent(job, source, no_shame=no_shame)
-    result = await run_with_retry(agent.run, prompt)
+    result = await run_tracked_agent(agent, prompt, component="Optimizer")
     return OptimizedResume(
         html=result.output.html,
         iteration=context.iteration,
