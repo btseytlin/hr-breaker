@@ -9,7 +9,7 @@ from hr_breaker.config import get_flash_model, get_model_settings
 from hr_breaker.models import JobPosting, OptimizedResume
 from hr_breaker.models.language import Language
 from hr_breaker.services.renderer import get_renderer, RenderError
-from hr_breaker.utils.retry import run_with_retry
+from hr_breaker.utils.optimization_telemetry import run_tracked_agent
 
 
 class CombinedReviewResult(BaseModel):
@@ -86,7 +86,7 @@ CHECK FORMATTING STANDARDS:
 - Consistent date format throughout
 - No orphan lines
 - Balanced whitespace
-- ~3-5 lines per bullet point
+- 1-2 lines per bullet point
 - All bullets same indent level within a section
 
 CHECK PROFESSIONAL LANGUAGE:
@@ -140,7 +140,6 @@ Return ALL fields:
 - ats_issues: specific ATS failures found
 """
 
-
 @lru_cache
 def get_combined_reviewer_agent() -> Agent:
     agent = Agent(
@@ -182,6 +181,7 @@ async def combined_review(
     Args:
         optimized: The optimized resume
         job: Job posting to match against
+        source: Original resume source used to supply deterministic header contact info
 
     Returns (result, pdf_bytes, page_count, render_warnings).
     pdf_bytes is None if rendering failed.
@@ -278,13 +278,15 @@ This resume is written in {language.english_name}. This is intentional — the c
 """
 
     agent = get_combined_reviewer_agent()
-    result = await run_with_retry(
-        agent.run,
+    result = await run_tracked_agent(
+        agent,
         [
             prompt,
             BinaryContent(data=image_bytes, media_type="image/png"),
         ],
+        component="LLMChecker",
     )
+
 
     return result.output, pdf_bytes, page_count, render_warnings
 

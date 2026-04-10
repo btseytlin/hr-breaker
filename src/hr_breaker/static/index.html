@@ -51,61 +51,226 @@
 
                     <template x-if="!resume.loaded">
                         <div>
-                            <!-- Cached resume picker -->
-                            <template x-if="cachedResumes.length > 0">
-                                <div class="cached-resumes">
-                                    <label>Previously used</label>
-                                    <template x-for="r in cachedResumes" :key="r.checksum">
-                                        <div class="cached-resume-item" @click="selectCachedResume(r)">
-                                            <div style="display: flex; justify-content: space-between; align-items: baseline;">
-                                                <span class="name" x-text="[r.first_name, r.last_name].filter(Boolean).join(' ') || 'Unknown'"></span>
-                                                <span style="display: flex; align-items: center; gap: 6px;">
-                                                    <span class="meta" x-text="formatShortDate(r.timestamp)"></span>
-                                                    <button class="btn-remove" @click.stop="removeCachedResume(r.checksum)" title="Remove">&times;</button>
-                                                </span>
-                                            </div>
-                                            <span class="meta" x-text="r.filename || 'pasted'"></span>
-                                        </div>
-                                    </template>
-                                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin: 6px 0 4px">Or add new:</div>
-                                </div>
-                            </template>
-
-                            <div class="tabs">
-                                <button class="tab" :class="resume.inputMode === 'upload' && 'active'"
-                                        @click="resume.inputMode = 'upload'">Upload</button>
-                                <button class="tab" :class="resume.inputMode === 'paste' && 'active'"
-                                        @click="resume.inputMode = 'paste'">Paste</button>
+                            <!-- Your profiles -->
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px">
+                                <span style="display: flex; align-items: center; gap: 4px">
+                                    <label style="margin: 0">Your profiles</label>
+                                    <span class="help-hint" title="A profile groups your resume documents. Click a profile to use it as your resume, or click ✎ to add/remove documents. Dropping a file creates a new profile automatically.">?</span>
+                                </span>
+                                <button class="btn btn-ghost btn-sm" @click="profile.creating = !profile.creating">+ New profile</button>
                             </div>
 
-                            <template x-if="resume.inputMode === 'upload'">
-                                <div class="file-drop" :class="{'dragover': $el._dragover}"
-                                     @dragover.prevent="$el._dragover = true"
-                                     @dragleave="$el._dragover = false"
-                                     @drop.prevent="$el._dragover = false; handleFileUpload({target: {files: $event.dataTransfer.files}})">
-                                    <template x-if="!resume.loading">
-                                        <div>
-                                            <div>Drop file or click to browse</div>
-                                            <div class="file-hint">.tex .md .txt .pdf</div>
-                                        </div>
-                                    </template>
-                                    <template x-if="resume.loading">
-                                        <div><span class="spinner"></span> Extracting name...</div>
-                                    </template>
-                                    <input type="file" accept=".tex,.md,.txt,.pdf" @change="handleFileUpload($event)">
+                            <!-- Create profile form -->
+                            <template x-if="profile.creating">
+                                <div style="margin-bottom: 10px; padding: 8px; border: 1px solid var(--border); border-radius: 6px;">
+                                    <input type="text" x-model="profile.newName" placeholder="Profile name"
+                                           style="margin-bottom: 6px" @keydown.enter="createProfile">
+                                    <textarea x-model="profile.newInstructions" placeholder="Instructions (optional)" rows="2"
+                                              style="margin-bottom: 6px; font-size: 0.85rem"></textarea>
+                                    <div style="display: flex; gap: 6px">
+                                        <button class="btn btn-secondary btn-sm" @click="createProfile"
+                                                :disabled="!profile.newName.trim() || profile.loading">
+                                            <template x-if="profile.loading"><span class="spinner"></span></template>
+                                            Create
+                                        </button>
+                                        <button class="btn btn-ghost btn-sm" @click="profile.creating = false; profile.newName = ''; profile.newInstructions = ''">
+                                            Cancel
+                                        </button>
+                                    </div>
                                 </div>
                             </template>
 
-                            <template x-if="resume.inputMode === 'paste'">
-                                <div>
-                                    <textarea x-model="resume.pasteText" placeholder="Paste resume text..." rows="4"></textarea>
-                                    <button class="btn btn-secondary btn-sm" style="margin-top: 8px"
-                                            @click="submitPasteResume" :disabled="!resume.pasteText.trim() || resume.loading">
-                                        <template x-if="resume.loading"><span class="spinner"></span></template>
-                                        Submit
-                                    </button>
+                            <div x-show="profile.error" class="field-error" x-text="profile.error" style="margin-bottom: 8px"></div>
+
+                            <!-- Profile list -->
+                            <div class="resume-source-list" x-show="profileEntries.length > 0">
+                                <template x-for="p in profileEntries" :key="p.id">
+                                    <div>
+                                        <div class="cached-resume-item" @click="selectProfile(p)">
+                                            <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px;">
+                                                <span class="name" x-text="p.display_name || p.id"></span>
+                                                <span class="resume-source-actions">
+                                                    <template x-if="profile.activatingId === p.id"><span class="spinner" style="width:12px;height:12px"></span></template>
+                                                    <span class="extraction-badge" :class="'extraction-' + profileExtractionSummary(p)"
+                                                          x-text="profileExtractionSummary(p)" x-show="(p.document_count || 0) > 0"></span>
+                                                    <span class="doc-count-badge" x-text="(p.document_count || 0) + ' doc' + ((p.document_count || 0) !== 1 ? 's' : '')"
+                                                          x-show="(p.document_count || 0) > 0"></span>
+                                                    <span class="meta" x-text="formatShortDate(p.updated_at || p.created_at)" x-show="p.updated_at || p.created_at"></span>
+                                                    <button class="btn-icon" @click.stop="openProfileEditor(p)" title="Edit profile">✎</button>
+                                                    <button class="btn-remove" @click.stop="deleteProfile(p.id)" title="Delete">&times;</button>
+                                                </span>
+                                            </div>
+                                            <span class="meta" x-text="(p.document_count || 0) > 0 ? 'Click to use as resume' : 'No documents yet'"></span>
+                                        </div>
+
+                                        <!-- Inline profile editor -->
+                                        <div x-show="profile.editingId === p.id" class="inline-editor">
+                                            <!-- Upload document -->
+                                            <div class="file-drop file-drop-compact" style="margin-bottom: 8px"
+                                                 :class="{'dragover': $el._dragover}"
+                                                 @dragover.prevent="$el._dragover = true"
+                                                 @dragleave="$el._dragover = false"
+                                                 @drop.prevent="$el._dragover = false; uploadProfileDoc({target: {files: $event.dataTransfer.files}})">
+                                                <template x-if="!profile.uploading">
+                                                    <div>
+                                                        <div>Add documents</div>
+                                                        <div class="file-hint">.tex .md .txt .pdf</div>
+                                                    </div>
+                                                </template>
+                                                <template x-if="profile.uploading">
+                                                    <div><span class="spinner"></span> <span x-text="profile.uploadProgress || 'Uploading...'"></span></div>
+                                                </template>
+                                                <input type="file" accept=".tex,.md,.txt,.pdf" multiple @change="uploadProfileDoc($event)">
+                                            </div>
+
+                                            <!-- Document list -->
+                                            <div class="profile-document-list">
+                                                <div x-show="profile.documents.length === 0 && !profile.uploading" class="empty-hint">
+                                                    No documents. Upload one above.
+                                                </div>
+
+                                                <!-- Customize toggle (only for 2+ docs) -->
+                                                <div x-show="profile.documents.length >= 2" style="margin-bottom: 6px">
+                                                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.8rem; color: var(--text-secondary)">
+                                                        <input type="checkbox" :checked="profile.showDocCustomize"
+                                                               @change="toggleDocCustomize()">
+                                                        Customize document selection (<span x-text="selectedProfileDocumentCount()"></span> selected)
+                                                    </label>
+                                                </div>
+
+                                                <template x-for="doc in profile.documents" :key="doc.id">
+                                                    <div class="cached-resume-item" style="padding: 8px 10px">
+                                                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+                                                            <label style="display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; cursor: pointer;">
+                                                                <input type="checkbox" x-show="profile.showDocCustomize"
+                                                                       :checked="isProfileDocSelected(doc.id)"
+                                                                       @click.stop
+                                                                       @change="setProfileDocSelected(doc.id, $event.target.checked)">
+                                                                <span class="name" x-text="doc.title"></span>
+                                                            </label>
+                                                            <span style="display: flex; align-items: center; gap: 6px">
+                                                                <span class="extraction-badge" :class="'extraction-' + (doc.extraction_status || 'pending')"
+                                                                      x-text="doc.extraction_status || 'pending'"></span>
+                                                                <button class="btn-remove" @click.stop="deleteProfileDoc(doc.id)" title="Remove">&times;</button>
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                </template>
+                                            </div>
+
+                                            <!-- Extraction logs -->
+                                            <div x-show="profile.extractionLogs.length > 0" style="margin-top: 8px">
+                                                <div class="log-toggle" @click="profile.logsOpen = !profile.logsOpen">
+                                                    <span x-text="(profile.logsOpen ? 'Hide' : 'Show') + ' extraction logs (' + profile.extractionLogs.length + ')'"></span>
+                                                    <span class="chevron" :class="profile.logsOpen && 'open'"></span>
+                                                </div>
+                                                <div x-show="profile.logsOpen" class="log-panel" style="max-height: 120px">
+                                                    <template x-for="(log, i) in profile.extractionLogs" :key="i">
+                                                        <div class="log-line">
+                                                            <span class="log-level" :class="'log-' + log.level.toLowerCase()"
+                                                                  x-text="log.level.substring(0,4)"></span>
+                                                            <span class="log-msg" x-text="log.message"></span>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </div>
+
+                                            <!-- Add note -->
+                                            <div style="margin-top: 8px">
+                                                <button class="btn btn-ghost btn-sm" @click="profile.showNoteForm = !profile.showNoteForm">
+                                                    <span x-text="profile.showNoteForm ? '× Cancel note' : '+ Add note'"></span>
+                                                </button>
+                                            </div>
+                                            <template x-if="profile.showNoteForm">
+                                                <div style="margin-top: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 6px;">
+                                                    <input type="text" x-model="profile.noteTitle" placeholder="Note title"
+                                                           style="margin-bottom: 6px" @keydown.enter.prevent="$el.nextElementSibling.focus()">
+                                                    <textarea x-model="profile.noteContent" placeholder="Note content..." rows="3"
+                                                              style="margin-bottom: 6px; font-size: 0.85rem"></textarea>
+                                                    <button class="btn btn-secondary btn-sm"
+                                                            @click="addProfileNote"
+                                                            :disabled="!profile.noteTitle.trim() || profile.addingNote">
+                                                        <template x-if="profile.addingNote"><span class="spinner"></span></template>
+                                                        Add Note
+                                                    </button>
+                                                </div>
+                                            </template>
+
+                                            <!-- Re-extract + Done -->
+                                            <div class="action-row" style="margin-top: 10px; gap: 6px">
+                                                <button class="btn btn-ghost btn-sm" style="flex: 0 0 auto"
+                                                        @click="reExtractProfile"
+                                                        :disabled="profile.documents.length === 0"
+                                                        title="Re-run extraction on all documents">
+                                                    ↻ Re-extract
+                                                </button>
+                                                <button class="btn btn-secondary btn-sm" style="flex: 1"
+                                                        @click="closeProfileEditor()">
+                                                    Done
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <div x-show="profileEntries.length === 0 && !profile.loading && !profile.creating" class="empty-hint" style="margin-bottom: 8px">
+                                No profiles yet.
+                            </div>
+
+                            <!-- Legacy cached resumes (non-profile) -->
+                            <template x-if="legacyResumeEntries.length > 0">
+                                <div style="margin-top: 10px">
+                                    <label>Previous uploads</label>
+                                    <div class="resume-source-list">
+                                        <template x-for="r in legacyResumeEntries" :key="r.checksum">
+                                            <div class="cached-resume-item" @click="selectCachedResume(r)">
+                                                <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px;">
+                                                    <span class="name" x-text="[r.first_name, r.last_name].filter(Boolean).join(' ') || 'Unknown'"></span>
+                                                    <span class="resume-source-actions">
+                                                        <span class="meta" x-text="formatShortDate(r.timestamp)" x-show="r.timestamp"></span>
+                                                        <button class="btn-remove" @click.stop="removeCachedResume(r.checksum)" title="Remove">&times;</button>
+                                                    </span>
+                                                </div>
+                                                <span class="meta" x-text="r.filename || 'pasted'"></span>
+                                            </div>
+                                        </template>
+                                    </div>
                                 </div>
                             </template>
+
+                            <!-- Divider + quick-create -->
+                            <div style="font-size: 0.75rem; color: var(--text-secondary); margin: 10px 0 6px">Or add new</div>
+
+                            <div class="file-drop" :class="{'dragover': $el._dragover}"
+                                 @dragover.prevent="$el._dragover = true"
+                                 @dragleave="$el._dragover = false"
+                                 @drop.prevent="$el._dragover = false; handleFileUpload({target: {files: $event.dataTransfer.files}})">
+                                <template x-if="!resume.loading">
+                                    <div>
+                                        <div>Drop file to create profile</div>
+                                        <div class="file-hint">.tex .md .txt .pdf</div>
+                                    </div>
+                                </template>
+                                <template x-if="resume.loading">
+                                    <div><span class="spinner"></span> Creating profile...</div>
+                                </template>
+                                <input type="file" accept=".tex,.md,.txt,.pdf" @change="handleFileUpload($event)">
+                            </div>
+
+                            <!-- Paste toggle -->
+                            <div style="margin-top: 8px">
+                                <span class="preview-toggle" @click="resume.pasteMode = !resume.pasteMode"
+                                      x-text="resume.pasteMode ? 'Cancel paste' : 'Paste text instead'"></span>
+                            </div>
+                            <div x-show="resume.pasteMode" style="margin-top: 6px">
+                                <textarea x-model="resume.pasteText" placeholder="Paste resume text..." rows="4"></textarea>
+                                <button class="btn btn-secondary btn-sm" style="margin-top: 8px"
+                                        @click="submitPasteResume" :disabled="!resume.pasteText.trim() || resume.loading">
+                                    <template x-if="resume.loading"><span class="spinner"></span></template>
+                                    Submit
+                                </button>
+                            </div>
                         </div>
                     </template>
                 </div>
@@ -220,14 +385,22 @@
                     <span x-text="optimization.statusMessage"></span>
                 </div>
 
+                <template x-if="usageStatusLines().length > 0">
+                    <div style="margin-top: 8px">
+                        <template x-for="(line, i) in usageStatusLines()" :key="i">
+                            <div class="sidebar-hint" x-text="line"></div>
+                        </template>
+                    </div>
+                </template>
+
                 <!-- Log panel -->
-                <div x-show="optimization.logs.length > 0" class="log-section">
+                <div x-show="visibleOptimizationLogs().length > 0" class="log-section">
                     <div class="log-toggle" @click="optimization.logsOpen = !optimization.logsOpen">
-                        <span x-text="(optimization.logsOpen ? 'Hide' : 'Show') + ' logs (' + optimization.logs.length + ')'"></span>
+                        <span x-text="(optimization.logsOpen ? 'Hide' : 'Show') + ' logs (' + visibleOptimizationLogs().length + ')'" ></span>
                         <span class="chevron" :class="optimization.logsOpen && 'open'"></span>
                     </div>
                     <div x-show="optimization.logsOpen" id="log-panel" class="log-panel">
-                        <template x-for="(log, i) in optimization.logs" :key="i">
+                        <template x-for="(log, i) in visibleOptimizationLogs()" :key="i">
                             <div class="log-line">
                                 <span class="log-level" :class="'log-' + log.level.toLowerCase()" x-text="({DEBUG:'DEBUG',INFO:'INFO ',WARNING:'WARN ',ERROR:'ERROR',CRITICAL:'CRIT '}[log.level] || log.level).substring(0,5)"></span>
                                 <span class="log-msg" x-text="log.message"></span>
@@ -361,6 +534,10 @@
                         <label for="opt-debug">Debug mode (save iterations)</label>
                     </div>
                     <div class="setting-row">
+                        <input type="checkbox" id="opt-intermediate" x-model="settings.showIntermediateLogs">
+                        <label for="opt-intermediate">Intermediate logs</label>
+                    </div>
+                    <div class="setting-row">
                         <input type="checkbox" id="opt-shame" x-model="settings.noShame">
                         <label for="opt-shame">No Shame mode</label>
                     </div>
@@ -374,18 +551,108 @@
                     <span class="chevron" :class="drawerSections.models && 'open'"></span>
                 </div>
                 <div class="sidebar-section-body" x-show="drawerSections.models">
-                    <div class="setting-field">
-                        <label for="opt-pro-model">Pro model</label>
-                        <input type="text" id="opt-pro-model" x-model="settings.proModel">
+                    <div class="sidebar-hint" style="margin-bottom:6px">Provider is detected from the model path prefix (e.g. <code>gemini/</code>, <code>openrouter/</code>). Set API keys below.</div>
+
+                    <!-- Pro model (combobox) -->
+                    <div class="setting-field" x-data="{ open: false, q: '' }">
+                        <label>Pro model</label>
+                        <div class="combobox">
+                            <input type="text"
+                                   :value="open ? q : settings.proModel"
+                                   @focus="q = settings.proModel; open = true; onModelInput(q)"
+                                   @input="q = $event.target.value; open = true; onModelInput(q)"
+                                   @keydown.enter.prevent="settings.proModel = q; open = false; $event.target.blur()"
+                                   @keydown.escape="open = false; $event.target.blur()"
+                                   @blur="setTimeout(() => { if (q) settings.proModel = q; open = false }, 150)"
+                                   placeholder="e.g. gemini/gemini-3-pro-preview">
+                            <div class="combobox-list" x-show="open && chatModelsForText(q).length > 0">
+                                <template x-for="m in chatModelsForText(q).filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
+                                    <div class="combobox-option"
+                                         @mousedown.prevent="settings.proModel = m.value; q = m.value; open = false"
+                                         x-text="m.value"></div>
+                                </template>
+                                <div class="combobox-empty"
+                                     x-show="q && chatModelsForText(q).filter(m => m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase())).length === 0">
+                                    No matches — press Enter to use custom value
+                                </div>
+                            </div>
+                        </div>
+                        <div class="sidebar-hint catalog-status" x-show="catalogMessageForText(settings.proModel)"
+                             :class="catalogMessageForText(settings.proModel)?.type"
+                             x-text="catalogMessageForText(settings.proModel)?.text" style="margin-top:3px"></div>
+                        <input type="text" x-model="customBaseUrls.pro"
+                               x-show="customBaseUrls.pro || !_extractProviderFromModel(settings.proModel)"
+                               @input="_saveToStorage()"
+                               placeholder="Base URL (for custom endpoints)" style="margin-top:4px;font-size:0.82rem">
                     </div>
-                    <div class="setting-field">
-                        <label for="opt-flash-model">Flash model</label>
-                        <input type="text" id="opt-flash-model" x-model="settings.flashModel">
+
+                    <!-- Flash model (combobox) -->
+                    <div class="setting-field" x-data="{ open: false, q: '' }">
+                        <label>Flash model</label>
+                        <div class="combobox">
+                            <input type="text"
+                                   :value="open ? q : settings.flashModel"
+                                   @focus="q = settings.flashModel; open = true; onModelInput(q)"
+                                   @input="q = $event.target.value; open = true; onModelInput(q)"
+                                   @keydown.enter.prevent="settings.flashModel = q; open = false; $event.target.blur()"
+                                   @keydown.escape="open = false; $event.target.blur()"
+                                   @blur="setTimeout(() => { if (q) settings.flashModel = q; open = false }, 150)"
+                                   placeholder="e.g. gemini/gemini-3-flash-preview">
+                            <div class="combobox-list" x-show="open && chatModelsForText(q).length > 0">
+                                <template x-for="m in chatModelsForText(q).filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
+                                    <div class="combobox-option"
+                                         @mousedown.prevent="settings.flashModel = m.value; q = m.value; open = false"
+                                         x-text="m.value"></div>
+                                </template>
+                                <div class="combobox-empty"
+                                     x-show="q && chatModelsForText(q).filter(m => m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase())).length === 0">
+                                    No matches — press Enter to use custom value
+                                </div>
+                            </div>
+                        </div>
+                        <div class="sidebar-hint catalog-status" x-show="catalogMessageForText(settings.flashModel)"
+                             :class="catalogMessageForText(settings.flashModel)?.type"
+                             x-text="catalogMessageForText(settings.flashModel)?.text" style="margin-top:3px"></div>
+                        <input type="text" x-model="customBaseUrls.flash"
+                               x-show="customBaseUrls.flash || !_extractProviderFromModel(settings.flashModel)"
+                               @input="_saveToStorage()"
+                               placeholder="Base URL (for custom endpoints)" style="margin-top:4px;font-size:0.82rem">
                     </div>
-                    <div class="setting-field">
-                        <label for="opt-embed-model">Embedding model</label>
-                        <input type="text" id="opt-embed-model" x-model="settings.embeddingModel">
+
+                    <!-- Embedding model (combobox) -->
+                    <div class="setting-field" x-data="{ open: false, q: '' }">
+                        <label>Embedding model</label>
+                        <div class="combobox">
+                            <input type="text"
+                                   :value="open ? q : settings.embeddingModel"
+                                   @focus="q = settings.embeddingModel; open = true; onModelInput(q)"
+                                   @input="q = $event.target.value; open = true; onModelInput(q)"
+                                   @keydown.enter.prevent="settings.embeddingModel = q; open = false; $event.target.blur()"
+                                   @keydown.escape="open = false; $event.target.blur()"
+                                   @blur="setTimeout(() => { if (q) settings.embeddingModel = q; open = false }, 150)"
+                                   placeholder="e.g. openrouter/google/gemini-embedding-001">
+                            <div class="combobox-list" x-show="open && embeddingModelsForText(q).length > 0">
+                                <template x-for="m in embeddingModelsForText(q).filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
+                                    <div class="combobox-option"
+                                         @mousedown.prevent="settings.embeddingModel = m.value; q = m.value; open = false"
+                                         x-text="m.value"></div>
+                                </template>
+                                <div class="combobox-empty"
+                                     x-show="q && embeddingModelsForText(q).filter(m => m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase())).length === 0">
+                                    No matches — press Enter to use custom value
+                                </div>
+                            </div>
+                        </div>
+                        <div class="sidebar-hint catalog-status" x-show="catalogMessageForText(settings.embeddingModel)"
+                             :class="catalogMessageForText(settings.embeddingModel)?.type"
+                             x-text="catalogMessageForText(settings.embeddingModel)?.text" style="margin-top:3px"></div>
+                        <input type="text" x-model="customBaseUrls.embedding"
+                               x-show="customBaseUrls.embedding || !_extractProviderFromModel(settings.embeddingModel)"
+                               @input="_saveToStorage()"
+                               placeholder="Base URL (for custom endpoints)" style="margin-top:4px;font-size:0.82rem">
                     </div>
+
+                    <!-- Reasoning effort -->
                     <div class="setting-field">
                         <label for="opt-reasoning">Reasoning effort</label>
                         <select id="opt-reasoning" x-model="settings.reasoningEffort">
@@ -412,10 +679,13 @@
                             <label x-text="label"></label>
                             <div class="key-input-row">
                                 <input type="password" x-model="settings.apiKeys[key]"
+                                       @input="fetchCatalog(key)"
                                        :placeholder="appSettings.apiKeysSet[key] ? '(set in .env)' : '(not set)'">
                                 <span class="key-status"
                                       :class="(settings.apiKeys[key] || appSettings.apiKeysSet[key]) ? 'key-set' : 'key-unset'"
-                                      x-text="(settings.apiKeys[key] || appSettings.apiKeysSet[key]) ? 'SET' : '-'"></span>
+                                      x-text="(settings.apiKeys[key] || appSettings.apiKeysSet[key]) ? '✓' : ''"></span>
+                                <button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:0.8rem;flex-shrink:0"
+                                        @click="fetchCatalog(key)" title="Refresh models">↻</button>
                             </div>
                         </div>
                     </template>

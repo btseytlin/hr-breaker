@@ -1,8 +1,12 @@
 """Tests for litellm vision patch."""
 
+import asyncio
 import base64
+import inspect
 
+import litellm
 import pytest
+from litellm.litellm_core_utils.logging_worker import LoggingWorker
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -12,10 +16,13 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     UserPromptPart,
-)
+    )
 
-from hr_breaker.litellm_patch import _convert_user_content, _patched_map_messages
-
+from hr_breaker.litellm_patch import (
+    _convert_user_content,
+    _patched_map_messages,
+    apply,
+ )
 
 class TestConvertUserContent:
     def test_plain_string(self):
@@ -131,3 +138,88 @@ class TestPatchedMapMessages:
         assert msg["role"] == "assistant"
         assert len(msg["tool_calls"]) == 1
         assert msg["tool_calls"][0]["function"]["name"] == "check_length"
+
+
+    @pytest.mark.asyncio
+    async def test_system_messages_are_hoisted_before_user_messages(self):
+        messages = [
+            ModelRequest(parts=[UserPromptPart(content="Hello first")]),
+            ModelRequest(parts=[SystemPromptPart(content="Late system")]),
+        ]
+
+        result = await _patched_map_messages(None, messages)
+        assert result == [
+            {"role": "system", "content": "Late system"},
+            {"role": "user", "content": "Hello first"},
+        ]
+
+@pytest.fixture(autouse=True)
+def _reset_litellm_callbacks():
+    original_success = list(litellm.success_callback)
+    original_async_success = list(litellm._async_success_callback)
+    original_failure = list(litellm.failure_callback)
+    original_async_failure = list(litellm._async_failure_callback)
+    apply()
+    litellm.success_callback[:] = []
+    litellm._async_success_callback[:] = []
+    litellm.failure_callback[:] = []
+    litellm._async_failure_callback[:] = []
+    try:
+        yield
+    finally:
+        litellm.success_callback[:] = original_success
+        litellm._async_success_callback[:] = original_async_success
+        litellm.failure_callback[:] = original_failure
+        litellm._async_failure_callback[:] = original_async_failure
+
+
+class TestLoggingWorkerPatch:
+    @pytest.mark.asyncio
+    async def test_skips_worker_when_no_async_callbacks_exist(self):
+        worker = LoggingWorker()
+
+        async def noop():
+            return None
+
+        coro = noop()
+        worker.ensure_initialized_and_enqueue(coro)
+        await asyncio.sleep(0)
+
+        assert worker._worker_task is None
+        assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
+
+    @pytest.mark.asyncio
+    async def test_starts_worker_when_async_callbacks_exist(self):
+        worker = LoggingWorker()
+        litellm._async_success_callback.append(object())
+        processed = asyncio.Event()
+
+        async def noop():
+            processed.set()
+            return None
+
+        worker.ensure_initialized_and_enqueue(noop())
+        await asyncio.wait_for(processed.wait(), timeout=1)
+
+        assert worker._worker_task is not None
+        await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_starts_worker_when_dynamic_async_callbacks_exist(self):
+        worker = LoggingWorker()
+        processed = asyncio.Event()
+
+        class FakeLoggingObj:
+            dynamic_async_success_callbacks = [object()]
+            dynamic_async_failure_callbacks = []
+
+            async def async_success_handler(self):
+                processed.set()
+                return None
+
+        logging_obj = FakeLoggingObj()
+        worker.ensure_initialized_and_enqueue(logging_obj.async_success_handler())
+        await asyncio.wait_for(processed.wait(), timeout=1)
+
+        assert worker._worker_task is not None
+        await worker.stop()

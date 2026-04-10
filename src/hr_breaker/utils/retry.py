@@ -19,8 +19,21 @@ logger = logging.getLogger(__name__)
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
+def _is_non_retryable_litellm_config_error(exc: BaseException) -> bool:
+    if not isinstance(exc, ModelHTTPError):
+        return False
+    message = str(exc)
+    return (
+        exc.status_code == 500
+        and "APIConnectionError" in message
+        and "argument of type 'NoneType' is not iterable" in message
+    )
+
+
 def is_retryable(exc: BaseException) -> bool:
     """Check if exception is retryable (rate limit or transient server error)."""
+    if _is_non_retryable_litellm_config_error(exc):
+        return False
     if isinstance(exc, ModelHTTPError):
         return exc.status_code in RETRYABLE_STATUS_CODES
     status = getattr(exc, "status_code", None)

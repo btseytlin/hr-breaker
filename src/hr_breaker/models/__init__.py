@@ -1,3 +1,18 @@
+from .feedback import FilterResult, ValidationResult, GeneratedPDF
+from .iteration import IterationContext
+from .job_posting import JobPosting
+from .language import Language, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE, get_language, get_language_safe, LANGUAGE_MODES, resolve_target_language
+from .profile import (
+    Profile,
+    ProfileDocument,
+    RankedProfileDocument,
+    DocumentExtraction,
+    ExperienceEntry,
+    EducationEntry,
+    PersonalInfo,
+    ProjectEntry,
+    SkillsEntry,
+)
 from .resume import ResumeSource, OptimizedResume
 from .resume_data import (
     ResumeData,
@@ -7,10 +22,6 @@ from .resume_data import (
     Education,
     Project,
 )
-from .job_posting import JobPosting
-from .feedback import FilterResult, ValidationResult, GeneratedPDF
-from .iteration import IterationContext
-from .language import Language, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE, LANGUAGE_MODES, get_language, get_language_safe, resolve_target_language
 
 __all__ = [
     "ResumeSource",
@@ -29,8 +40,17 @@ __all__ = [
     "Language",
     "SUPPORTED_LANGUAGES",
     "DEFAULT_LANGUAGE",
-    "LANGUAGE_MODES",
     "get_language",
     "get_language_safe",
+    "LANGUAGE_MODES",
     "resolve_target_language",
+    "Profile",
+    "ProfileDocument",
+    "RankedProfileDocument",
+    "DocumentExtraction",
+    "ExperienceEntry",
+    "EducationEntry",
+    "PersonalInfo",
+    "ProjectEntry",
+    "SkillsEntry",
 ]
