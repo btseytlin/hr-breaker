@@ -222,6 +222,8 @@ async def paste_resume(req: PasteResumeRequest):
     try:
         with settings_override(_build_overrides(req)):
             first_name, last_name, language_code = await extract_name(content)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Failed to extract name: {e}"})
 

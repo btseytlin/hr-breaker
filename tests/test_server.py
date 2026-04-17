@@ -164,6 +164,70 @@ async def test_paste_resume(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_upload_resume_with_corrupt_api_key_returns_400(client, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    config_module.clear_settings_cache()
+    try:
+        resp = await client.post(
+            "/api/resume/upload",
+            files={"file": ("resume.txt", b"John Doe\nSoftware Engineer", "text/plain")},
+            data={
+                "api_keys_json": json.dumps({"openrouter": "sk-абc"}),
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.json()
+        assert "non-ASCII" in body["error"]
+        assert "openrouter" in body["error"]
+    finally:
+        config_module.clear_settings_cache()
+
+
+@pytest.mark.asyncio
+async def test_upload_resume_strips_nbsp_in_api_key(client, monkeypatch):
+    """NBSP-prefixed key should be silently stripped; request then proceeds."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    config_module.clear_settings_cache()
+    try:
+        async def fake_extract_name(content):
+            assert os.environ.get("OPENROUTER_API_KEY") == "sk-clean"
+            return ("John", "Doe", "en")
+
+        with patch("hr_breaker.server.extract_name", new=AsyncMock(side_effect=fake_extract_name)):
+            resp = await client.post(
+                "/api/resume/upload",
+                files={"file": ("resume.txt", b"John Doe", "text/plain")},
+                data={
+                    "api_keys_json": json.dumps({"openrouter": "\u00a0\u00a0sk-clean"}),
+                },
+            )
+        assert resp.status_code == 200
+    finally:
+        config_module.clear_settings_cache()
+
+
+@pytest.mark.asyncio
+async def test_paste_resume_with_corrupt_api_key_returns_400(client, monkeypatch):
+    """Regression for issue #26: previously 500 with wrapped UnicodeEncodeError."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    config_module.clear_settings_cache()
+    try:
+        resp = await client.post(
+            "/api/resume/paste",
+            json={
+                "content": "John Doe\nSoftware Engineer",
+                "api_keys": {"openrouter": "sk-абc"},
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.json()
+        assert "non-ASCII" in body["error"]
+        assert "openrouter" in body["error"]
+    finally:
+        config_module.clear_settings_cache()
+
+
+@pytest.mark.asyncio
 async def test_history_empty(client):
     resp = await client.get("/api/history")
     assert resp.status_code == 200

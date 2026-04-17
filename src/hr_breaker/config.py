@@ -14,8 +14,30 @@ from pydantic_settings import BaseSettings
 import litellm
 
 from hr_breaker import litellm_patch
+from hr_breaker.utils.api_key import sanitize_api_key
 
 load_dotenv()
+
+
+_ENV_API_KEY_PROVIDERS: tuple[tuple[str, str], ...] = (
+    ("GEMINI_API_KEY", "gemini"),
+    ("GOOGLE_API_KEY", "gemini"),
+    ("OPENROUTER_API_KEY", "openrouter"),
+    ("OPENAI_API_KEY", "openai"),
+    ("ANTHROPIC_API_KEY", "anthropic"),
+    ("MOONSHOT_API_KEY", "moonshot"),
+)
+
+
+def sanitize_env_api_keys() -> None:
+    """Sanitize all API key env vars in-place. Raises ValueError on non-ASCII residue."""
+    for env_var, provider in _ENV_API_KEY_PROVIDERS:
+        raw = os.environ.get(env_var)
+        if raw:
+            os.environ[env_var] = sanitize_api_key(raw, provider)
+
+
+sanitize_env_api_keys()
 
 litellm.suppress_debug_info = True
 litellm_patch.apply()
@@ -281,7 +303,17 @@ def settings_override(overrides: dict | None):
                 if env_var is None:
                     continue
                 saved[env_var] = os.environ.get(env_var)
-                os.environ[env_var] = str(key_value)
+                try:
+                    os.environ[env_var] = sanitize_api_key(str(key_value), provider)
+                except ValueError:
+                    # Restore any env vars already applied so the failed
+                    # override does not partially leak.
+                    for restore_var, original in saved.items():
+                        if original is None:
+                            os.environ.pop(restore_var, None)
+                        else:
+                            os.environ[restore_var] = original
+                    raise
 
         get_settings.cache_clear()
         try:
