@@ -41,8 +41,9 @@ document.addEventListener('alpine:init', () => {
             flashModel: '',
             embeddingModel: '',
             reasoningEffort: '',
+
             showIntermediateLogs: false,
-            apiKeys: { gemini: '', openrouter: '', openai: '', anthropic: '', moonshot: '' },
+            apiKeys: { gemini: '', openrouter: '', openai: '', deepseek: '', anthropic: '', moonshot: '' },
             thresholds: { hallucination: 0.9, keyword: 0.25, llm: 0.7, vector: 0.4, ai_generated: 0.4, translation: 0.95 },
         },
 
@@ -53,7 +54,7 @@ document.addEventListener('alpine:init', () => {
             flashModel: '',
             embeddingModel: '',
             reasoningEffort: '',
-            apiKeysSet: { gemini: false, openrouter: false, openai: false, anthropic: false, moonshot: false },
+            apiKeysSet: { gemini: false, openrouter: false, openai: false, deepseek: false, anthropic: false, moonshot: false },
             filterThresholds: {},
         },
 
@@ -125,6 +126,7 @@ document.addEventListener('alpine:init', () => {
                 ['gemini', 'Gemini API Key'],
                 ['openrouter', 'OpenRouter API Key'],
                 ['openai', 'OpenAI API Key'],
+                ['deepseek', 'DeepSeek API Key'],
                 ['anthropic', 'Anthropic API Key'],
                 ['moonshot', 'Moonshot API Key'],
             ];
@@ -211,6 +213,7 @@ document.addEventListener('alpine:init', () => {
                 if (!raw) return;
                 const state = JSON.parse(raw);
                 if (state.settings) {
+
                     Object.assign(this.settings, state.settings);
                     this._restoredFromStorage = true;
                 }

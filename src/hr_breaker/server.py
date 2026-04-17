@@ -172,6 +172,7 @@ async def get_app_settings():
             "gemini": bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")),
             "openrouter": bool(os.environ.get("OPENROUTER_API_KEY")),
             "openai": bool(os.environ.get("OPENAI_API_KEY")),
+            "deepseek": bool(os.environ.get("DEEPSEEK_API_KEY")),
             "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY")),
             "moonshot": bool(os.environ.get("MOONSHOT_API_KEY")),
         },
