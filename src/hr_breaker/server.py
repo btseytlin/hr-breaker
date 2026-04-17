@@ -402,6 +402,8 @@ async def quick_create_profile(
         try:
             with settings_override(overrides):
                 first_name, last_name, language_code = await extract_name(raw_content)
+        except ValueError as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
         except Exception as e:
             return JSONResponse(status_code=500, content={"error": f"Failed to extract name: {e}"})
 
@@ -419,6 +421,8 @@ async def quick_create_profile(
         try:
             with settings_override(overrides):
                 first_name, last_name, language_code = await extract_name(raw_content)
+        except ValueError as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
         except Exception as e:
             return JSONResponse(status_code=500, content={"error": f"Failed to extract name: {e}"})
 
@@ -621,6 +625,8 @@ async def synthesize_profile(profile_id: str, req: SynthesizeProfileRequest):
             job = JobPosting(title="", company="", raw_text=job_text, description=job_text)
             ranked = await rank_profile_documents(documents, job)
             source = synthesize_profile_resume_source(profile, documents, ranked).model_copy(update={"source_type": "profile", "source_profile_id": profile.id, "source_profile_name": profile.display_name})
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Synthesis failed: {e}"})
 

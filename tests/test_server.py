@@ -207,6 +207,71 @@ async def test_upload_resume_strips_nbsp_in_api_key(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_quick_create_profile_paste_with_corrupt_api_key_returns_400(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PROFILE_DIR", str(tmp_path))
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    config_module.clear_settings_cache()
+    try:
+        resp = await client.post(
+            "/api/profile/quick-create",
+            data={
+                "content": "John Doe\nSoftware Engineer",
+                "api_keys_json": json.dumps({"openrouter": "sk-абc"}),
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.json()
+        assert "non-ASCII" in body["error"]
+        assert "openrouter" in body["error"]
+    finally:
+        config_module.clear_settings_cache()
+
+
+@pytest.mark.asyncio
+async def test_quick_create_profile_upload_with_corrupt_api_key_returns_400(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PROFILE_DIR", str(tmp_path))
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    config_module.clear_settings_cache()
+    try:
+        resp = await client.post(
+            "/api/profile/quick-create",
+            files={"file": ("resume.txt", b"John Doe\nSoftware Engineer", "text/plain")},
+            data={"api_keys_json": json.dumps({"openrouter": "sk-абc"})},
+        )
+        assert resp.status_code == 400
+        body = resp.json()
+        assert "non-ASCII" in body["error"]
+        assert "openrouter" in body["error"]
+    finally:
+        config_module.clear_settings_cache()
+
+
+@pytest.mark.asyncio
+async def test_synthesize_profile_with_corrupt_api_key_returns_400(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PROFILE_DIR", str(tmp_path))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    config_module.clear_settings_cache()
+    try:
+        store = ProfileStore()
+        profile = store.create_profile("Candidate")
+        store.add_note(profile.id, title="Resume", content_text="resume text")
+
+        resp = await client.post(
+            f"/api/profile/{profile.id}/synthesize",
+            json={
+                "job_text": "Product manager role",
+                "api_keys": {"openai": "sk-абc"},
+            },
+        )
+        assert resp.status_code == 400
+        body = resp.json()
+        assert "non-ASCII" in body["error"]
+        assert "openai" in body["error"]
+    finally:
+        config_module.clear_settings_cache()
+
+
+@pytest.mark.asyncio
 async def test_paste_resume_with_corrupt_api_key_returns_400(client, monkeypatch):
     """Regression for issue #26: previously 500 with wrapped UnicodeEncodeError."""
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
