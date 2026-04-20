@@ -2,7 +2,6 @@ import os
 import threading
 import time
 
-import pytest
 
 import hr_breaker.config as config_module
 
@@ -43,6 +42,41 @@ class TestSettingsOverride:
             assert os.environ.get("EMBEDDING_OPENAI_API_BASE") == "https://embed.example.test/v1"
         assert os.environ.get("FLASH_OPENAI_API_BASE") == original_flash
         assert os.environ.get("EMBEDDING_OPENAI_API_BASE") == original_embedding
+
+
+    def test_override_scoped_anthropic_api_bases(self):
+        original_pro = os.environ.get("PRO_ANTHROPIC_API_BASE")
+        original_flash = os.environ.get("FLASH_ANTHROPIC_API_BASE")
+        with config_module.settings_override({
+            "pro_anthropic_api_base": "https://pro.anthropic.example.test",
+            "flash_anthropic_api_base": "https://flash.anthropic.example.test",
+        }):
+            assert os.environ.get("PRO_ANTHROPIC_API_BASE") == "https://pro.anthropic.example.test"
+            assert os.environ.get("FLASH_ANTHROPIC_API_BASE") == "https://flash.anthropic.example.test"
+        assert os.environ.get("PRO_ANTHROPIC_API_BASE") == original_pro
+        assert os.environ.get("FLASH_ANTHROPIC_API_BASE") == original_flash
+
+    def test_litellm_routing_uses_scope_specific_api_bases(self):
+        with config_module.settings_override({
+            "pro_model": "anthropic/claude-sonnet-4-5",
+            "flash_model": "openai/gpt-5.4-mini",
+            "embedding_model": "openai/text-embedding-3-small",
+            "anthropic_api_base": "https://anthropic.default.example.test",
+            "pro_anthropic_api_base": "https://anthropic.pro.example.test",
+            "flash_openai_api_base": "https://openai.flash.example.test/v1",
+            "embedding_openai_api_base": "https://openai.embed.example.test/v1",
+        }):
+            assert config_module.get_pro_model().model_name == "anthropic/claude-sonnet-4-5"
+            assert getattr(config_module.get_pro_model(), "_api_base") == "https://anthropic.pro.example.test"
+            assert config_module.get_flash_model().model_name == "openai/gpt-5.4-mini"
+            assert getattr(config_module.get_flash_model(), "_api_base") == "https://openai.flash.example.test/v1"
+            assert config_module.get_embedding_api_base() == "https://openai.embed.example.test/v1"
+
+    def test_custom_api_base_settings_field_is_scope_aware(self):
+        assert config_module.custom_api_base_settings_field("pro", "openai/gpt-5.4") == "pro_openai_api_base"
+        assert config_module.custom_api_base_settings_field("flash", "anthropic/claude-sonnet-4-5") == "flash_anthropic_api_base"
+        assert config_module.custom_api_base_settings_field("embedding", "openai/text-embedding-3-small") == "embedding_openai_api_base"
+        assert config_module.custom_api_base_settings_field("embedding", "anthropic/claude-sonnet-4-5") is None
 
 
     def test_empty_override_is_noop(self):

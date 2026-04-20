@@ -80,6 +80,10 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("OPENAI_API_BASE", "OPENAI_BASE_URL"),
     )
+    anthropic_api_base: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ANTHROPIC_API_BASE", "ANTHROPIC_BASE_URL"),
+    )
     pro_openai_api_base: str | None = Field(
         default=None,
         validation_alias=AliasChoices("PRO_OPENAI_API_BASE"),
@@ -91,6 +95,14 @@ class Settings(BaseSettings):
     embedding_openai_api_base: str | None = Field(
         default=None,
         validation_alias=AliasChoices("EMBEDDING_OPENAI_API_BASE"),
+    )
+    pro_anthropic_api_base: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("PRO_ANTHROPIC_API_BASE"),
+    )
+    flash_anthropic_api_base: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("FLASH_ANTHROPIC_API_BASE"),
     )
 
     pro_model: str = "gemini/gemini-3-pro-preview"
@@ -163,12 +175,18 @@ class Settings(BaseSettings):
             os.environ["MOONSHOT_API_KEY"] = self.moonshot_api_key
         if self.openai_api_base and "OPENAI_API_BASE" not in os.environ:
             os.environ["OPENAI_API_BASE"] = self.openai_api_base
+        if self.anthropic_api_base and "ANTHROPIC_API_BASE" not in os.environ:
+            os.environ["ANTHROPIC_API_BASE"] = self.anthropic_api_base
         if self.pro_openai_api_base and "PRO_OPENAI_API_BASE" not in os.environ:
             os.environ["PRO_OPENAI_API_BASE"] = self.pro_openai_api_base
         if self.flash_openai_api_base and "FLASH_OPENAI_API_BASE" not in os.environ:
             os.environ["FLASH_OPENAI_API_BASE"] = self.flash_openai_api_base
         if self.embedding_openai_api_base and "EMBEDDING_OPENAI_API_BASE" not in os.environ:
             os.environ["EMBEDDING_OPENAI_API_BASE"] = self.embedding_openai_api_base
+        if self.pro_anthropic_api_base and "PRO_ANTHROPIC_API_BASE" not in os.environ:
+            os.environ["PRO_ANTHROPIC_API_BASE"] = self.pro_anthropic_api_base
+        if self.flash_anthropic_api_base and "FLASH_ANTHROPIC_API_BASE" not in os.environ:
+            os.environ["FLASH_ANTHROPIC_API_BASE"] = self.flash_anthropic_api_base
 
 
 @lru_cache
@@ -181,18 +199,31 @@ def clear_settings_cache() -> None:
     get_settings.cache_clear()
 
 
-def required_api_key_env_for_model(model_name: str) -> str | None:
+def model_provider_family(model_name: str) -> str | None:
+    if not model_name:
+        return None
     if model_name.startswith("openrouter/"):
-        return "OPENROUTER_API_KEY"
+        return "openrouter"
     if model_name.startswith("gemini/") or "gemini" in model_name:
-        return "GEMINI_API_KEY"
-    if model_name.startswith("openai/"):
-        return "OPENAI_API_KEY"
-    if model_name.startswith("anthropic/"):
-        return "ANTHROPIC_API_KEY"
-    if model_name.startswith("moonshot/"):
-        return "MOONSHOT_API_KEY"
+        return "gemini"
+    prefix = model_name.split("/", 1)[0]
+    if prefix in {"openai", "anthropic", "moonshot"}:
+        return prefix
     return None
+
+
+def required_api_key_env_for_model(model_name: str) -> str | None:
+    provider = model_provider_family(model_name)
+    if provider is None:
+        return None
+    env_map = {
+        "openrouter": "OPENROUTER_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "moonshot": "MOONSHOT_API_KEY",
+    }
+    return env_map.get(provider)
 
 
 def has_api_key_for_model(model_name: str) -> bool:
@@ -211,16 +242,41 @@ def has_api_key_for_model(model_name: str) -> bool:
     )
 
 
-def _litellm_api_base_for_model(scope: str, model_name: str) -> str | None:
-    settings = get_settings()
-    if not model_name.startswith("openai/"):
+_CUSTOM_API_BASE_FIELD_MAP: dict[str, dict[str, tuple[str, str]]] = {
+    "pro": {
+        "openai": ("pro_openai_api_base", "openai_api_base"),
+        "anthropic": ("pro_anthropic_api_base", "anthropic_api_base"),
+    },
+    "flash": {
+        "openai": ("flash_openai_api_base", "openai_api_base"),
+        "anthropic": ("flash_anthropic_api_base", "anthropic_api_base"),
+    },
+    "embedding": {
+        "openai": ("embedding_openai_api_base", "openai_api_base"),
+    },
+}
+
+
+def custom_api_base_settings_field(scope: str, model_name: str) -> str | None:
+    provider = model_provider_family(model_name)
+    if provider is None:
         return None
-    scoped_field = {
-        "pro": "pro_openai_api_base",
-        "flash": "flash_openai_api_base",
-        "embedding": "embedding_openai_api_base",
-    }[scope]
-    return getattr(settings, scoped_field) or settings.openai_api_base
+    field_names = _CUSTOM_API_BASE_FIELD_MAP.get(scope, {}).get(provider)
+    if field_names is None:
+        return None
+    return field_names[0]
+
+
+def _litellm_api_base_for_model(scope: str, model_name: str) -> str | None:
+    provider = model_provider_family(model_name)
+    if provider is None:
+        return None
+    field_names = _CUSTOM_API_BASE_FIELD_MAP.get(scope, {}).get(provider)
+    if field_names is None:
+        return None
+    scoped_field, default_field = field_names
+    settings = get_settings()
+    return getattr(settings, scoped_field) or getattr(settings, default_field)
 
 
 def _litellm_model(scope: str, model_name: str) -> LiteLLMModel:
@@ -239,7 +295,6 @@ def get_embedding_api_base() -> str | None:
     settings = get_settings()
     return _litellm_api_base_for_model("embedding", settings.embedding_model)
 
-
 _FIELD_ENV_MAP = {
     "pro_model": "PRO_MODEL",
     "flash_model": "FLASH_MODEL",
@@ -247,9 +302,12 @@ _FIELD_ENV_MAP = {
     "reasoning_effort": "REASONING_EFFORT",
     "max_tokens": "MAX_TOKENS",
     "openai_api_base": "OPENAI_API_BASE",
+    "anthropic_api_base": "ANTHROPIC_API_BASE",
     "pro_openai_api_base": "PRO_OPENAI_API_BASE",
     "flash_openai_api_base": "FLASH_OPENAI_API_BASE",
     "embedding_openai_api_base": "EMBEDDING_OPENAI_API_BASE",
+    "pro_anthropic_api_base": "PRO_ANTHROPIC_API_BASE",
+    "flash_anthropic_api_base": "FLASH_ANTHROPIC_API_BASE",
     "filter_hallucination_threshold": "FILTER_HALLUCINATION_THRESHOLD",
     "filter_keyword_threshold": "FILTER_KEYWORD_THRESHOLD",
     "filter_llm_threshold": "FILTER_LLM_THRESHOLD",

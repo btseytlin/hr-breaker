@@ -95,11 +95,11 @@ async def test_resume_upload_applies_llm_overrides(client, monkeypatch):
                 "/api/resume/upload",
                 files={"file": ("resume.txt", b"John Doe\nSoftware Engineer", "text/plain")},
                 data={
-                    "flash_model": "openai/gpt-5.3-codex",
+                    "flash_model": "localhost/openai/gpt-5.3-codex",
                     "reasoning_effort": "medium",
                     "api_keys_json": json.dumps({"openai": "sk-test"}),
                     "providers_json": json.dumps({
-                        "flash": {"provider": "custom", "base_url": "https://example.test/v1"}
+                        "flash": {"base_url": "https://example.test/v1"}
                     }),
                 },
             )
@@ -146,11 +146,11 @@ async def test_paste_resume(client, monkeypatch):
                 "/api/resume/paste",
                 json={
                     "content": "John Doe\nSoftware Engineer",
-                    "flash_model": "openai/gpt-5.3-codex",
+                    "flash_model": "custom/openai/gpt-5.3-codex",
                     "reasoning_effort": "medium",
                     "api_keys": {"openai": "sk-test"},
                     "providers": {
-                        "flash": {"provider": "custom", "base_url": "https://example.test/v1"}
+                        "flash": {"base_url": "https://example.test/v1"}
                     },
                 },
             )
@@ -392,7 +392,7 @@ async def test_profile_document_upload_forwards_llm_overrides(client, monkeypatc
                     "reasoning_effort": "medium",
                     "api_keys_json": json.dumps({"openai": "sk-test"}),
                     "providers_json": json.dumps({
-                        "flash": {"provider": "custom", "base_url": "https://example.test/v1"}
+                        "flash": {"base_url": "https://example.test/v1"}
                     }),
                 },
             )
@@ -464,7 +464,6 @@ async def test_re_extract_profile_forwards_llm_overrides(client, monkeypatch, tm
                     "api_keys": {"openai": "sk-test"},
                     "providers": {
                         "flash": {
-                            "provider": "custom",
                             "base_url": "https://example.test/v1",
                         },
                     },
@@ -547,7 +546,6 @@ async def test_synthesize_profile_applies_llm_overrides(client, monkeypatch, tmp
                     "api_keys": {"openai": "sk-test"},
                     "providers": {
                         "embedding": {
-                            "provider": "custom",
                             "base_url": "https://example.test/v1",
                         },
                     },
@@ -594,8 +592,8 @@ def test_build_overrides_maps_scoped_custom_base_urls():
         embedding_model="openai/text-embedding-3-small",
         api_keys={"openai": "sk-test"},
         providers={
-            "flash": server_module.ProviderOverride(provider="custom", base_url="https://example.test/v1"),
-            "embedding": server_module.ProviderOverride(provider="custom", base_url="https://embed.example.test/v1"),
+            "flash": server_module.ProviderOverride(base_url="https://example.test/v1"),
+            "embedding": server_module.ProviderOverride(base_url="https://embed.example.test/v1"),
         },
         filter_thresholds={"vector": 0.5},
     )
@@ -612,6 +610,42 @@ def test_build_overrides_maps_scoped_custom_base_urls():
     }
 
 
+def test_build_overrides_normalizes_legacy_custom_paths_and_maps_anthropic_bases():
+    req = server_module.OptimizeRequest(
+        resume_checksum="resume-checksum",
+        job_text="Product manager role",
+        pro_model="custom/anthropic/claude-sonnet-4-5",
+        flash_model="localhost/openai/gpt-5.4-mini",
+        providers={
+            "pro": server_module.ProviderOverride(base_url="https://anthropic-proxy.example.test"),
+            "flash": server_module.ProviderOverride(base_url="https://openai-proxy.example.test/v1"),
+        },
+    )
+
+    overrides = server_module._build_overrides(req)
+
+    assert req.pro_model == "anthropic/claude-sonnet-4-5"
+    assert req.flash_model == "openai/gpt-5.4-mini"
+    assert overrides["pro_model"] == "anthropic/claude-sonnet-4-5"
+    assert overrides["flash_model"] == "openai/gpt-5.4-mini"
+    assert overrides["pro_anthropic_api_base"] == "https://anthropic-proxy.example.test"
+    assert overrides["flash_openai_api_base"] == "https://openai-proxy.example.test/v1"
+
+
+def test_build_overrides_rejects_custom_base_url_for_unsupported_provider():
+    req = server_module.OptimizeRequest(
+        resume_checksum="resume-checksum",
+        job_text="Product manager role",
+        flash_model="gemini/gemini-2.5-flash",
+        providers={
+            "flash": server_module.ProviderOverride(base_url="https://example.test/v1"),
+        },
+    )
+
+    with pytest.raises(ValueError, match="Custom base URL is supported only"):
+        server_module._build_overrides(req)
+
+
 def test_normalize_optimization_error_for_custom_provider_none_type_failure():
     req = server_module.OptimizeRequest(
         resume_checksum="resume-checksum",
@@ -621,7 +655,6 @@ def test_normalize_optimization_error_for_custom_provider_none_type_failure():
         embedding_model="openai/text-embedding-3-small",
         providers={
             "flash": server_module.ProviderOverride(
-                provider="custom",
                 base_url="http://127.0.0.1:8317/v1",
             ),
         },
@@ -634,6 +667,23 @@ def test_normalize_optimization_error_for_custom_provider_none_type_failure():
 
     message = server_module._normalize_optimization_error(exc, req)
 
-    assert "Custom OpenAI-compatible provider request failed before the model returned a usable response" in message
+    assert "Custom provider request failed before the model returned a usable response" in message
     assert "flash: http://127.0.0.1:8317/v1" in message
     assert "openai/gpt-5.4, openai/gpt-5.3-codex, openai/text-embedding-3-small" in message
+
+
+@pytest.mark.asyncio
+async def test_optimize_rejects_legacy_custom_prefix_without_base_url(client):
+    source = ResumeSource(content="resume text", first_name="Jane", last_name="Doe")
+    with patch("hr_breaker.server.ResumeCache.get", return_value=source):
+        resp = await client.post(
+            "/api/optimize",
+            json={
+                "resume_checksum": "resume-checksum",
+                "job_text": "Product manager role",
+                "flash_model": "localhost/openai/gpt-5.4-mini",
+            },
+        )
+
+    assert resp.status_code == 400
+    assert "Use `openai/<model>`" in resp.json()["error"]

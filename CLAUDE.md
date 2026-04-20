@@ -152,10 +152,11 @@ Repro: `uv run python scripts/repro_vision_bug.py` (without patch) vs `uv run py
   - Legacy cached resumes (non-profile `source_type`) shown in separate "Previous uploads" section below profiles
   - Drop zone and paste toggle below profile list for quick profile creation
 - Per-run overrides: frontend sends model/key/threshold overrides with optimize request
+- Custom endpoints use canonical LiteLLM model prefixes (`openai/...`, `anthropic/...`) plus a per-scope `Use custom base URL` toggle. Chat scopes support custom base URLs for canonical OpenAI/Anthropic routes; embedding custom base URLs are limited to canonical `openai/...` models.
 - Backend: `settings_override()` context manager temporarily sets env vars + clears `get_settings` cache for the duration of a run (safe since only one optimization runs at a time)
 - API keys: never persisted to localStorage, only sent per-request. Backend only returns boolean "is set" status, never actual values
 - Settings (models, thresholds, reasoning effort) prefilled from server defaults on load
-- Only settings, drawer state, and selected resume checksum persisted to localStorage (no job text, no API keys)
+- localStorage persists settings, drawer state, selected resume checksum, and custom base URL toggle/value state. API keys and job text are not persisted.
 
 ### Language Mode System
 - Language is a **mode**, not a fixed code: `from_job` (default), `from_resume`, `en`, `ru`

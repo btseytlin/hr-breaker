@@ -101,8 +101,9 @@ document.addEventListener('alpine:init', () => {
 
         // Model catalog cache (keyed by provider prefix)
         modelCatalog: {},
-        // Per-model base URLs for custom/OpenAI-compatible endpoints
+        // Per-model custom endpoint state
         customBaseUrls: { pro: '', flash: '', embedding: '' },
+        customBaseUrlEnabled: { pro: false, flash: false, embedding: false },
 
         // Cached resumes/jobs for pickers
         cachedResumes: [],
@@ -188,6 +189,7 @@ document.addEventListener('alpine:init', () => {
 
             // Load model catalogs for detected providers
             await this.fetchAllCatalogs();
+            this._saveToStorage();
         },
 
         _storageKey: 'hr-breaker-state',
@@ -198,6 +200,7 @@ document.addEventListener('alpine:init', () => {
                 settings: this.settings,
                 drawerSections: this.drawerSections,
                 customBaseUrls: this.customBaseUrls,
+                customBaseUrlEnabled: this.customBaseUrlEnabled,
                 selectedResumeChecksum: this.resume.checksum,
             };
             try { localStorage.setItem(this._storageKey, JSON.stringify(state)); } catch {}
@@ -220,6 +223,15 @@ document.addEventListener('alpine:init', () => {
                 if (state.customBaseUrls && typeof state.customBaseUrls === 'object') {
                     Object.assign(this.customBaseUrls, state.customBaseUrls);
                 }
+                if (state.customBaseUrlEnabled && typeof state.customBaseUrlEnabled === 'object') {
+                    Object.assign(this.customBaseUrlEnabled, state.customBaseUrlEnabled);
+                }
+                for (const scope of ['pro', 'flash', 'embedding']) {
+                    if ((!state.customBaseUrlEnabled || !(scope in state.customBaseUrlEnabled)) && this.customBaseUrls[scope]) {
+                        this.customBaseUrlEnabled[scope] = true;
+                    }
+                }
+                this._sanitizeStoredModelPaths();
                 if (state.selectedResumeChecksum) {
                     this._savedResumeChecksum = state.selectedResumeChecksum;
                 }
@@ -268,6 +280,7 @@ document.addEventListener('alpine:init', () => {
                 if (!this.settings.flashModel) this.settings.flashModel = data.flash_model || '';
                 if (!this.settings.embeddingModel) this.settings.embeddingModel = data.embedding_model || '';
                 if (!this.settings.reasoningEffort) this.settings.reasoningEffort = data.reasoning_effort || '';
+                this._sanitizeStoredModelPaths();
                 if (!this._restoredFromStorage) {
                     this.settings.language = data.default_language;
                     this.settings.maxIterations = data.max_iterations;
@@ -903,15 +916,46 @@ document.addEventListener('alpine:init', () => {
 
         // --- Provider / catalog actions ---
 
-        _extractProviderFromModel(modelPath) {
-            if (!modelPath) return null;
+        _modelRouteInfo(modelPath) {
+            const normalized = (modelPath || '').trim();
+            if (!normalized) return { provider: null, canonicalModel: '' };
+            const parts = normalized.split('/').filter(Boolean);
+            if (parts.length >= 3 && ['openai', 'anthropic'].includes(parts[1])) {
+                return {
+                    provider: parts[1],
+                    canonicalModel: `${parts[1]}/${parts.slice(2).join('/')}`
+                };
+            }
             const known = ['gemini', 'openrouter', 'openai', 'anthropic', 'moonshot'];
-            const prefix = modelPath.split('/')[0];
-            return known.includes(prefix) ? prefix : null;
+            const provider = known.includes(parts[0]) ? parts[0] : null;
+            return { provider, canonicalModel: normalized };
+        },
+
+        _normalizeModelPath(modelPath) {
+            return this._modelRouteInfo(modelPath).canonicalModel;
+        },
+
+        _sanitizeStoredModelPaths() {
+            for (const key of ['proModel', 'flashModel', 'embeddingModel']) {
+                const normalized = this._normalizeModelPath(this.settings[key]);
+                if (normalized !== this.settings[key]) {
+                    this.settings[key] = normalized;
+                }
+            }
+        },
+
+        _extractProviderFromModel(modelPath) {
+            return this._modelRouteInfo(modelPath).provider;
         },
 
         _modelKeyForScope(scope) {
             return { pro: 'proModel', flash: 'flashModel', embedding: 'embeddingModel' }[scope];
+        },
+
+        _supportsCustomBaseUrl(scope, modelPath = null) {
+            const provider = this._extractProviderFromModel(modelPath ?? this.settings[this._modelKeyForScope(scope)]);
+            if (scope === 'embedding') return provider === 'openai';
+            return provider === 'openai' || provider === 'anthropic';
         },
 
         _providerForScope(scope) {
@@ -928,25 +972,39 @@ document.addEventListener('alpine:init', () => {
             return this.appSettings.apiKeysSet[provider] || false;
         },
 
-        _catalogEntry(provider) {
-            if (!provider) return null;
-            return this.modelCatalog[provider] || null;
+        _customBaseUrlForScope(scope, modelPath = null) {
+            if (!this.customBaseUrlEnabled[scope]) return null;
+            const candidateModelPath = modelPath ?? this.settings[this._modelKeyForScope(scope)];
+            if (!this._supportsCustomBaseUrl(scope, candidateModelPath)) return null;
+            const url = (this.customBaseUrls[scope] || '').trim();
+            return url || null;
         },
 
-        chatModelsForText(text) {
+        _catalogCacheKey(provider, baseUrl = null) {
+            if (!provider) return null;
+            return `${provider}::${(baseUrl || '').trim()}`;
+        },
+
+        _catalogEntry(provider, baseUrl = null) {
+            const key = this._catalogCacheKey(provider, baseUrl);
+            if (!key) return null;
+            return this.modelCatalog[key] || null;
+        },
+
+        chatModelsForText(text, scope = null) {
             const provider = this._extractProviderFromModel(text);
-            const entry = this._catalogEntry(provider);
+            const entry = this._catalogEntry(provider, scope ? this._customBaseUrlForScope(scope, text) : null);
             return entry ? (entry.chatModels || []) : [];
         },
 
-        embeddingModelsForText(text) {
+        embeddingModelsForText(text, scope = null) {
             const provider = this._extractProviderFromModel(text);
-            const entry = this._catalogEntry(provider);
+            const entry = this._catalogEntry(provider, scope ? this._customBaseUrlForScope(scope, text) : null);
             return entry ? (entry.embeddingModels || []) : [];
         },
 
         catalogStatusForScope(scope) {
-            const entry = this._catalogEntry(this._providerForScope(scope));
+            const entry = this._catalogEntry(this._providerForScope(scope), this._customBaseUrlForScope(scope));
             return entry || { status: 'unknown', message: '', detail: '', checking: false };
         },
 
@@ -954,7 +1012,7 @@ document.addEventListener('alpine:init', () => {
             const result = {};
             let hasAny = false;
             for (const scope of ['pro', 'flash', 'embedding']) {
-                const url = (this.customBaseUrls[scope] || '').trim();
+                const url = this._customBaseUrlForScope(scope);
                 if (url) {
                     result[scope] = { base_url: url };
                     hasAny = true;
@@ -963,10 +1021,10 @@ document.addEventListener('alpine:init', () => {
             return hasAny ? result : null;
         },
 
-        catalogMessageForText(text) {
+        catalogMessageForText(text, scope = null) {
             const provider = this._extractProviderFromModel(text);
             if (!provider) return null;
-            const entry = this._catalogEntry(provider);
+            const entry = this._catalogEntry(provider, scope ? this._customBaseUrlForScope(scope, text) : null);
             if (!entry) return null;
             if (entry.checking) return { type: 'info', text: 'Loading models...' };
             if (entry.status === 'connected') return null;
@@ -974,22 +1032,27 @@ document.addEventListener('alpine:init', () => {
             return null;
         },
 
-        async fetchCatalog(provider) {
+        async fetchCatalog(scope, options = {}) {
+            const modelPath = options.modelPath ?? this.settings[this._modelKeyForScope(scope)];
+            const provider = this._extractProviderFromModel(modelPath);
             if (!provider) return;
-            const existing = this.modelCatalog[provider];
+            const baseUrl = this._customBaseUrlForScope(scope, modelPath);
+            const cacheKey = this._catalogCacheKey(provider, baseUrl);
+            if (!cacheKey) return;
+            const existing = this.modelCatalog[cacheKey];
             if (existing && existing.checking) return;
 
             const apiKey = this._apiKeyForProvider(provider) || null;
             const hasEnvKey = this._hasEnvKeyForProvider(provider);
             if (!apiKey && !hasEnvKey) {
-                this.modelCatalog[provider] = { status: 'warning', message: `Set ${provider} API key in API Keys section to browse models`, detail: '', chatModels: [], embeddingModels: [], checking: false };
+                this.modelCatalog[cacheKey] = { status: 'warning', message: `Set ${provider} API key in API Keys section to browse models`, detail: '', chatModels: [], embeddingModels: [], checking: false };
                 return;
             }
 
-            this.modelCatalog[provider] = { ...(existing || {}), status: 'unknown', message: 'Loading...', detail: '', checking: true, chatModels: existing?.chatModels || [], embeddingModels: existing?.embeddingModels || [] };
+            this.modelCatalog[cacheKey] = { ...(existing || {}), status: 'unknown', message: 'Loading...', detail: '', checking: true, chatModels: existing?.chatModels || [], embeddingModels: existing?.embeddingModels || [] };
 
             try {
-                const body = { provider, api_key: apiKey };
+                const body = { provider, api_key: apiKey, base_url: baseUrl };
                 const resp = await fetch('/api/providers/check', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -997,7 +1060,7 @@ document.addEventListener('alpine:init', () => {
                 });
                 const data = await resp.json();
                 if (!resp.ok) throw new Error(data.detail || data.error || data.message || 'Request failed');
-                this.modelCatalog[provider] = {
+                this.modelCatalog[cacheKey] = {
                     status: data.status.state,
                     message: data.status.message,
                     detail: data.status.detail || '',
@@ -1006,7 +1069,7 @@ document.addEventListener('alpine:init', () => {
                     checking: false,
                 };
             } catch (e) {
-                this.modelCatalog[provider] = {
+                this.modelCatalog[cacheKey] = {
                     status: 'warning',
                     message: 'Check failed',
                     detail: e instanceof Error ? e.message : String(e),
@@ -1018,18 +1081,21 @@ document.addEventListener('alpine:init', () => {
         },
 
         async fetchAllCatalogs() {
-            const providers = new Set(
-                ['pro', 'flash', 'embedding'].map(s => this._providerForScope(s)).filter(Boolean)
-            );
-            await Promise.all([...providers].map(p => this.fetchCatalog(p)));
+            const scopes = ['pro', 'flash', 'embedding'].filter(scope => this._providerForScope(scope));
+            await Promise.all(scopes.map(scope => this.fetchCatalog(scope)));
         },
 
-        onModelInput(text) {
+        async fetchCatalogsForProvider(provider) {
+            const scopes = ['pro', 'flash', 'embedding'].filter(scope => this._providerForScope(scope) === provider);
+            await Promise.all(scopes.map(scope => this.fetchCatalog(scope)));
+        },
+
+        onModelInput(scope, text) {
             const provider = this._extractProviderFromModel(text);
             if (!provider) return;
-            const entry = this._catalogEntry(provider);
+            const entry = this._catalogEntry(provider, this._customBaseUrlForScope(scope, text));
             if (!entry || (!entry.chatModels?.length && !entry.embeddingModels?.length && entry.status !== 'connected')) {
-                this.fetchCatalog(provider);
+                this.fetchCatalog(scope, { modelPath: text });
             }
         },
 

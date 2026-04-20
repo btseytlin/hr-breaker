@@ -551,7 +551,7 @@
                     <span class="chevron" :class="drawerSections.models && 'open'"></span>
                 </div>
                 <div class="sidebar-section-body" x-show="drawerSections.models">
-                    <div class="sidebar-hint" style="margin-bottom:6px">Provider is detected from the model path prefix (e.g. <code>gemini/</code>, <code>openrouter/</code>). Set API keys below.</div>
+                    <div class="sidebar-hint" style="margin-bottom:6px">Provider is detected from the model path prefix (e.g. <code>gemini/</code>, <code>openrouter/</code>). Set API keys below. Enable a custom base URL only when routing through a compatible proxy.</div>
 
                     <!-- Pro model (combobox) -->
                     <div class="setting-field" x-data="{ open: false, q: '' }">
@@ -559,30 +559,34 @@
                         <div class="combobox">
                             <input type="text"
                                    :value="open ? q : settings.proModel"
-                                   @focus="q = settings.proModel; open = true; onModelInput(q)"
-                                   @input="q = $event.target.value; open = true; onModelInput(q)"
-                                   @keydown.enter.prevent="settings.proModel = q; open = false; $event.target.blur()"
+                                   @focus="q = settings.proModel; open = true; onModelInput('pro', q)"
+                                   @input="q = $event.target.value; open = true; onModelInput('pro', q)"
+                                   @keydown.enter.prevent="settings.proModel = _normalizeModelPath(q); open = false; $event.target.blur()"
                                    @keydown.escape="open = false; $event.target.blur()"
-                                   @blur="setTimeout(() => { if (q) settings.proModel = q; open = false }, 150)"
+                                   @blur="setTimeout(() => { if (q) settings.proModel = _normalizeModelPath(q); open = false }, 150)"
                                    placeholder="e.g. gemini/gemini-3-pro-preview">
-                            <div class="combobox-list" x-show="open && chatModelsForText(q).length > 0">
-                                <template x-for="m in chatModelsForText(q).filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
+                            <div class="combobox-list" x-show="open && chatModelsForText(q, 'pro').length > 0">
+                                <template x-for="m in chatModelsForText(q, 'pro').filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
                                     <div class="combobox-option"
                                          @mousedown.prevent="settings.proModel = m.value; q = m.value; open = false"
                                          x-text="m.value"></div>
                                 </template>
                                 <div class="combobox-empty"
-                                     x-show="q && chatModelsForText(q).filter(m => m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase())).length === 0">
+                                     x-show="q && chatModelsForText(q, 'pro').filter(m => m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase())).length === 0">
                                     No matches — press Enter to use custom value
                                 </div>
                             </div>
                         </div>
-                        <div class="sidebar-hint catalog-status" x-show="catalogMessageForText(settings.proModel)"
-                             :class="catalogMessageForText(settings.proModel)?.type"
-                             x-text="catalogMessageForText(settings.proModel)?.text" style="margin-top:3px"></div>
+                        <div class="sidebar-hint catalog-status" x-show="catalogMessageForText(settings.proModel, 'pro')"
+                             :class="catalogMessageForText(settings.proModel, 'pro')?.type"
+                             x-text="catalogMessageForText(settings.proModel, 'pro')?.text" style="margin-top:3px"></div>
+                        <div class="setting-row" x-show="_supportsCustomBaseUrl('pro')" style="margin-top:6px">
+                            <input type="checkbox" id="pro-custom-base" x-model="customBaseUrlEnabled.pro" @change="_saveToStorage(); fetchCatalog('pro')">
+                            <label for="pro-custom-base">Use custom base URL</label>
+                        </div>
                         <input type="text" x-model="customBaseUrls.pro"
-                               x-show="customBaseUrls.pro || !_extractProviderFromModel(settings.proModel)"
-                               @input="_saveToStorage()"
+                               x-show="customBaseUrlEnabled.pro && _supportsCustomBaseUrl('pro')"
+                               @change="_saveToStorage(); fetchCatalog('pro')"
                                placeholder="Base URL (for custom endpoints)" style="margin-top:4px;font-size:0.82rem">
                     </div>
 
@@ -592,30 +596,34 @@
                         <div class="combobox">
                             <input type="text"
                                    :value="open ? q : settings.flashModel"
-                                   @focus="q = settings.flashModel; open = true; onModelInput(q)"
-                                   @input="q = $event.target.value; open = true; onModelInput(q)"
-                                   @keydown.enter.prevent="settings.flashModel = q; open = false; $event.target.blur()"
+                                   @focus="q = settings.flashModel; open = true; onModelInput('flash', q)"
+                                   @input="q = $event.target.value; open = true; onModelInput('flash', q)"
+                                   @keydown.enter.prevent="settings.flashModel = _normalizeModelPath(q); open = false; $event.target.blur()"
                                    @keydown.escape="open = false; $event.target.blur()"
-                                   @blur="setTimeout(() => { if (q) settings.flashModel = q; open = false }, 150)"
+                                   @blur="setTimeout(() => { if (q) settings.flashModel = _normalizeModelPath(q); open = false }, 150)"
                                    placeholder="e.g. gemini/gemini-3-flash-preview">
-                            <div class="combobox-list" x-show="open && chatModelsForText(q).length > 0">
-                                <template x-for="m in chatModelsForText(q).filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
+                            <div class="combobox-list" x-show="open && chatModelsForText(q, 'flash').length > 0">
+                                <template x-for="m in chatModelsForText(q, 'flash').filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
                                     <div class="combobox-option"
                                          @mousedown.prevent="settings.flashModel = m.value; q = m.value; open = false"
                                          x-text="m.value"></div>
                                 </template>
                                 <div class="combobox-empty"
-                                     x-show="q && chatModelsForText(q).filter(m => m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase())).length === 0">
+                                     x-show="q && chatModelsForText(q, 'flash').filter(m => m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase())).length === 0">
                                     No matches — press Enter to use custom value
                                 </div>
                             </div>
                         </div>
-                        <div class="sidebar-hint catalog-status" x-show="catalogMessageForText(settings.flashModel)"
-                             :class="catalogMessageForText(settings.flashModel)?.type"
-                             x-text="catalogMessageForText(settings.flashModel)?.text" style="margin-top:3px"></div>
+                        <div class="sidebar-hint catalog-status" x-show="catalogMessageForText(settings.flashModel, 'flash')"
+                             :class="catalogMessageForText(settings.flashModel, 'flash')?.type"
+                             x-text="catalogMessageForText(settings.flashModel, 'flash')?.text" style="margin-top:3px"></div>
+                        <div class="setting-row" x-show="_supportsCustomBaseUrl('flash')" style="margin-top:6px">
+                            <input type="checkbox" id="flash-custom-base" x-model="customBaseUrlEnabled.flash" @change="_saveToStorage(); fetchCatalog('flash')">
+                            <label for="flash-custom-base">Use custom base URL</label>
+                        </div>
                         <input type="text" x-model="customBaseUrls.flash"
-                               x-show="customBaseUrls.flash || !_extractProviderFromModel(settings.flashModel)"
-                               @input="_saveToStorage()"
+                               x-show="customBaseUrlEnabled.flash && _supportsCustomBaseUrl('flash')"
+                               @change="_saveToStorage(); fetchCatalog('flash')"
                                placeholder="Base URL (for custom endpoints)" style="margin-top:4px;font-size:0.82rem">
                     </div>
 
@@ -625,30 +633,34 @@
                         <div class="combobox">
                             <input type="text"
                                    :value="open ? q : settings.embeddingModel"
-                                   @focus="q = settings.embeddingModel; open = true; onModelInput(q)"
-                                   @input="q = $event.target.value; open = true; onModelInput(q)"
-                                   @keydown.enter.prevent="settings.embeddingModel = q; open = false; $event.target.blur()"
+                                   @focus="q = settings.embeddingModel; open = true; onModelInput('embedding', q)"
+                                   @input="q = $event.target.value; open = true; onModelInput('embedding', q)"
+                                   @keydown.enter.prevent="settings.embeddingModel = _normalizeModelPath(q); open = false; $event.target.blur()"
                                    @keydown.escape="open = false; $event.target.blur()"
-                                   @blur="setTimeout(() => { if (q) settings.embeddingModel = q; open = false }, 150)"
+                                   @blur="setTimeout(() => { if (q) settings.embeddingModel = _normalizeModelPath(q); open = false }, 150)"
                                    placeholder="e.g. openrouter/google/gemini-embedding-001">
-                            <div class="combobox-list" x-show="open && embeddingModelsForText(q).length > 0">
-                                <template x-for="m in embeddingModelsForText(q).filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
+                            <div class="combobox-list" x-show="open && embeddingModelsForText(q, 'embedding').length > 0">
+                                <template x-for="m in embeddingModelsForText(q, 'embedding').filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
                                     <div class="combobox-option"
                                          @mousedown.prevent="settings.embeddingModel = m.value; q = m.value; open = false"
                                          x-text="m.value"></div>
                                 </template>
                                 <div class="combobox-empty"
-                                     x-show="q && embeddingModelsForText(q).filter(m => m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase())).length === 0">
+                                     x-show="q && embeddingModelsForText(q, 'embedding').filter(m => m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase())).length === 0">
                                     No matches — press Enter to use custom value
                                 </div>
                             </div>
                         </div>
-                        <div class="sidebar-hint catalog-status" x-show="catalogMessageForText(settings.embeddingModel)"
-                             :class="catalogMessageForText(settings.embeddingModel)?.type"
-                             x-text="catalogMessageForText(settings.embeddingModel)?.text" style="margin-top:3px"></div>
+                        <div class="sidebar-hint catalog-status" x-show="catalogMessageForText(settings.embeddingModel, 'embedding')"
+                             :class="catalogMessageForText(settings.embeddingModel, 'embedding')?.type"
+                             x-text="catalogMessageForText(settings.embeddingModel, 'embedding')?.text" style="margin-top:3px"></div>
+                        <div class="setting-row" x-show="_supportsCustomBaseUrl('embedding')" style="margin-top:6px">
+                            <input type="checkbox" id="embedding-custom-base" x-model="customBaseUrlEnabled.embedding" @change="_saveToStorage(); fetchCatalog('embedding')">
+                            <label for="embedding-custom-base">Use custom base URL</label>
+                        </div>
                         <input type="text" x-model="customBaseUrls.embedding"
-                               x-show="customBaseUrls.embedding || !_extractProviderFromModel(settings.embeddingModel)"
-                               @input="_saveToStorage()"
+                               x-show="customBaseUrlEnabled.embedding && _supportsCustomBaseUrl('embedding')"
+                               @change="_saveToStorage(); fetchCatalog('embedding')"
                                placeholder="Base URL (for custom endpoints)" style="margin-top:4px;font-size:0.82rem">
                     </div>
 
@@ -679,13 +691,13 @@
                             <label x-text="label"></label>
                             <div class="key-input-row">
                                 <input type="password" x-model="settings.apiKeys[key]"
-                                       @input="fetchCatalog(key)"
+                                       @input="fetchCatalogsForProvider(key)"
                                        :placeholder="appSettings.apiKeysSet[key] ? '(set in .env)' : '(not set)'">
                                 <span class="key-status"
                                       :class="(settings.apiKeys[key] || appSettings.apiKeysSet[key]) ? 'key-set' : 'key-unset'"
                                       x-text="(settings.apiKeys[key] || appSettings.apiKeysSet[key]) ? '✓' : ''"></span>
                                 <button class="btn btn-ghost btn-sm" style="padding:2px 5px;font-size:0.8rem;flex-shrink:0"
-                                        @click="fetchCatalog(key)" title="Refresh models">↻</button>
+                                        @click="fetchCatalogsForProvider(key)" title="Refresh models">↻</button>
                             </div>
                         </div>
                     </template>
