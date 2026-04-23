@@ -156,6 +156,22 @@ class Settings(BaseSettings):
     retry_max_attempts: int = 5
     retry_max_wait: float = 60.0
 
+    # Proxy settings (applies to all outgoing HTTP traffic)
+    proxy_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "HR_BREAKER_PROXY",
+            "PROXY_URL",
+            "ALL_PROXY",
+            "HTTPS_PROXY",
+            "HTTP_PROXY",
+        ),
+    )
+    no_proxy: str = Field(
+        default="localhost,127.0.0.1",
+        validation_alias=AliasChoices("HR_BREAKER_NO_PROXY", "NO_PROXY"),
+    )
+
     def model_post_init(self, __context: Any) -> None:
         if self.gemini_api_key and "GEMINI_API_KEY" not in os.environ:
             os.environ["GEMINI_API_KEY"] = self.gemini_api_key
