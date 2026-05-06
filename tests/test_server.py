@@ -95,11 +95,11 @@ async def test_resume_upload_applies_llm_overrides(client, monkeypatch):
                 "/api/resume/upload",
                 files={"file": ("resume.txt", b"John Doe\nSoftware Engineer", "text/plain")},
                 data={
-                    "flash_model": "openai/gpt-5.3-codex",
+                    "flash_model": "localhost/openai/gpt-5.3-codex",
                     "reasoning_effort": "medium",
                     "api_keys_json": json.dumps({"openai": "sk-test"}),
                     "providers_json": json.dumps({
-                        "flash": {"provider": "custom", "base_url": "https://example.test/v1"}
+                        "flash": {"base_url": "https://example.test/v1"}
                     }),
                 },
             )
@@ -146,11 +146,11 @@ async def test_paste_resume(client, monkeypatch):
                 "/api/resume/paste",
                 json={
                     "content": "John Doe\nSoftware Engineer",
-                    "flash_model": "openai/gpt-5.3-codex",
+                    "flash_model": "custom/openai/gpt-5.3-codex",
                     "reasoning_effort": "medium",
                     "api_keys": {"openai": "sk-test"},
                     "providers": {
-                        "flash": {"provider": "custom", "base_url": "https://example.test/v1"}
+                        "flash": {"base_url": "https://example.test/v1"}
                     },
                 },
             )
@@ -392,7 +392,7 @@ async def test_profile_document_upload_forwards_llm_overrides(client, monkeypatc
                     "reasoning_effort": "medium",
                     "api_keys_json": json.dumps({"openai": "sk-test"}),
                     "providers_json": json.dumps({
-                        "flash": {"provider": "custom", "base_url": "https://example.test/v1"}
+                        "flash": {"base_url": "https://example.test/v1"}
                     }),
                 },
             )
@@ -464,7 +464,6 @@ async def test_re_extract_profile_forwards_llm_overrides(client, monkeypatch, tm
                     "api_keys": {"openai": "sk-test"},
                     "providers": {
                         "flash": {
-                            "provider": "custom",
                             "base_url": "https://example.test/v1",
                         },
                     },
@@ -506,12 +505,90 @@ async def test_delete_profile_document_cancels_worker_before_removal(client, mon
         config_module.clear_settings_cache()
 
 
+@pytest.mark.asyncio
+async def test_get_profile_returns_note_content_only_for_notes(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PROFILE_DIR", str(tmp_path))
+    config_module.clear_settings_cache()
+    try:
+        store = ProfileStore()
+        profile = store.create_profile("Candidate")
+        note = store.add_note(profile.id, title="Note", content_text="editable note")
+        upload = store.add_upload(profile.id, filename="resume.txt", data=b"resume text")
+
+        resp = await client.get(f"/api/profile/{profile.id}")
+
+        assert resp.status_code == 200
+        docs = {doc["id"]: doc for doc in resp.json()["documents"]}
+        assert docs[note.id]["content"] == "editable note"
+        assert docs[upload.id]["content"] is None
+    finally:
+        config_module.clear_settings_cache()
+
+
+@pytest.mark.asyncio
+async def test_update_profile_note_updates_content_and_reextracts(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PROFILE_DIR", str(tmp_path))
+    config_module.clear_settings_cache()
+    try:
+        store = ProfileStore()
+        profile = store.create_profile("Candidate")
+        note = store.add_note(
+            profile.id,
+            title="Old",
+            content_text="old content",
+            metadata={"extraction": {"summary": ["old"]}, "extraction_status": "done"},
+        )
+
+        with patch("hr_breaker.services.extraction_worker.extraction_worker.cancel") as mock_cancel, patch(
+            "hr_breaker.services.extraction_worker.extraction_worker.submit"
+        ) as mock_submit:
+            resp = await client.patch(
+                f"/api/profile/{profile.id}/note/{note.id}",
+                json={"title": "New", "content": "new content"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"id": note.id, "title": "New", "kind": "note", "content": "new content"}
+        updated = store.get_document(profile.id, note.id)
+        assert updated is not None
+        assert updated.title == "New"
+        assert updated.content_text == "new content"
+        assert "extraction" not in updated.metadata
+        assert "extraction_status" not in updated.metadata
+        mock_cancel.assert_called_once_with([note.id])
+        mock_submit.assert_called_once_with(profile.id, [note.id])
+    finally:
+        config_module.clear_settings_cache()
+
+
+@pytest.mark.asyncio
+async def test_update_profile_note_rejects_non_notes(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PROFILE_DIR", str(tmp_path))
+    config_module.clear_settings_cache()
+    try:
+        store = ProfileStore()
+        profile = store.create_profile("Candidate")
+        doc = store.add_upload(profile.id, filename="resume.txt", data=b"resume text")
+
+        resp = await client.patch(
+            f"/api/profile/{profile.id}/note/{doc.id}",
+            json={"title": "Nope", "content": "changed"},
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Only notes can be edited"
+    finally:
+        config_module.clear_settings_cache()
+
+
 
 @pytest.mark.asyncio
 async def test_synthesize_profile_applies_llm_overrides(client, monkeypatch, tmp_path):
     monkeypatch.setenv("PROFILE_DIR", str(tmp_path))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_BASE", raising=False)
+    monkeypatch.delenv("LLM_SHARED_PROVIDER", raising=False)
+    monkeypatch.delenv("LLM_SHARED_BASE_URL", raising=False)
     config_module.clear_settings_cache()
     try:
         store = ProfileStore()
@@ -547,7 +624,6 @@ async def test_synthesize_profile_applies_llm_overrides(client, monkeypatch, tmp
                     "api_keys": {"openai": "sk-test"},
                     "providers": {
                         "embedding": {
-                            "provider": "custom",
                             "base_url": "https://example.test/v1",
                         },
                     },
@@ -594,8 +670,8 @@ def test_build_overrides_maps_scoped_custom_base_urls():
         embedding_model="openai/text-embedding-3-small",
         api_keys={"openai": "sk-test"},
         providers={
-            "flash": server_module.ProviderOverride(provider="custom", base_url="https://example.test/v1"),
-            "embedding": server_module.ProviderOverride(provider="custom", base_url="https://embed.example.test/v1"),
+            "flash": server_module.ProviderOverride(base_url="https://example.test/v1"),
+            "embedding": server_module.ProviderOverride(base_url="https://embed.example.test/v1"),
         },
         filter_thresholds={"vector": 0.5},
     )
@@ -612,6 +688,42 @@ def test_build_overrides_maps_scoped_custom_base_urls():
     }
 
 
+def test_build_overrides_normalizes_legacy_custom_paths_and_maps_anthropic_bases():
+    req = server_module.OptimizeRequest(
+        resume_checksum="resume-checksum",
+        job_text="Product manager role",
+        pro_model="custom/anthropic/claude-sonnet-4-5",
+        flash_model="localhost/openai/gpt-5.4-mini",
+        providers={
+            "pro": server_module.ProviderOverride(base_url="https://anthropic-proxy.example.test"),
+            "flash": server_module.ProviderOverride(base_url="https://openai-proxy.example.test/v1"),
+        },
+    )
+
+    overrides = server_module._build_overrides(req)
+
+    assert req.pro_model == "anthropic/claude-sonnet-4-5"
+    assert req.flash_model == "openai/gpt-5.4-mini"
+    assert overrides["pro_model"] == "anthropic/claude-sonnet-4-5"
+    assert overrides["flash_model"] == "openai/gpt-5.4-mini"
+    assert overrides["pro_anthropic_api_base"] == "https://anthropic-proxy.example.test"
+    assert overrides["flash_openai_api_base"] == "https://openai-proxy.example.test/v1"
+
+
+def test_build_overrides_rejects_custom_base_url_for_unsupported_provider():
+    req = server_module.OptimizeRequest(
+        resume_checksum="resume-checksum",
+        job_text="Product manager role",
+        flash_model="gemini/gemini-2.5-flash",
+        providers={
+            "flash": server_module.ProviderOverride(base_url="https://example.test/v1"),
+        },
+    )
+
+    with pytest.raises(ValueError, match="Custom base URL is supported only"):
+        server_module._build_overrides(req)
+
+
 def test_normalize_optimization_error_for_custom_provider_none_type_failure():
     req = server_module.OptimizeRequest(
         resume_checksum="resume-checksum",
@@ -621,7 +733,6 @@ def test_normalize_optimization_error_for_custom_provider_none_type_failure():
         embedding_model="openai/text-embedding-3-small",
         providers={
             "flash": server_module.ProviderOverride(
-                provider="custom",
                 base_url="http://127.0.0.1:8317/v1",
             ),
         },
@@ -634,6 +745,54 @@ def test_normalize_optimization_error_for_custom_provider_none_type_failure():
 
     message = server_module._normalize_optimization_error(exc, req)
 
-    assert "Custom OpenAI-compatible provider request failed before the model returned a usable response" in message
+    assert "Custom provider request failed before the model returned a usable response" in message
     assert "flash: http://127.0.0.1:8317/v1" in message
     assert "openai/gpt-5.4, openai/gpt-5.3-codex, openai/text-embedding-3-small" in message
+
+
+@pytest.mark.asyncio
+async def test_optimize_rejects_legacy_custom_prefix_without_base_url(client):
+    source = ResumeSource(content="resume text", first_name="Jane", last_name="Doe")
+    with patch("hr_breaker.server.ResumeCache.get", return_value=source):
+        resp = await client.post(
+            "/api/optimize",
+            json={
+                "resume_checksum": "resume-checksum",
+                "job_text": "Product manager role",
+                "flash_model": "localhost/openai/gpt-5.4-mini",
+            },
+        )
+
+    assert resp.status_code == 400
+    assert "Use `openai/<model>`" in resp.json()["error"]
+
+@pytest.mark.asyncio
+async def test_update_profile_note_noop_skips_reextraction(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PROFILE_DIR", str(tmp_path))
+    config_module.clear_settings_cache()
+    try:
+        store = ProfileStore()
+        profile = store.create_profile("Candidate")
+        note = store.add_note(
+            profile.id,
+            title="Same",
+            content_text="same content",
+            metadata={"extraction": {"summary": ["kept"]}, "extraction_status": "done"},
+        )
+
+        with patch("hr_breaker.services.extraction_worker.extraction_worker.cancel") as mock_cancel, patch(
+            "hr_breaker.services.extraction_worker.extraction_worker.submit"
+        ) as mock_submit:
+            resp = await client.patch(
+                f"/api/profile/{profile.id}/note/{note.id}",
+                json={"title": "Same", "content": "same content"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"id": note.id, "title": "Same", "kind": "note", "content": "same content"}
+        mock_cancel.assert_not_called()
+        mock_submit.assert_not_called()
+        reloaded = store.get_document(profile.id, note.id)
+        assert reloaded.metadata.get("extraction_status") == "done"
+    finally:
+        config_module.clear_settings_cache()

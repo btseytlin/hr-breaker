@@ -549,8 +549,8 @@ label {
     text-transform: lowercase;
 }
 .extraction-done, .extraction-extracted { background: rgba(63, 185, 80, 0.15); color: var(--success); }
-.extraction-pending, .extraction-running { background: rgba(210, 153, 34, 0.15); color: var(--warning); }
-.extraction-error { background: rgba(248, 81, 73, 0.15); color: var(--error); }
+.extraction-pending, .extraction-running, .extraction-extracting { background: rgba(210, 153, 34, 0.15); color: var(--warning); }
+.extraction-error, .extraction-empty { background: rgba(248, 81, 73, 0.15); color: var(--error); }
 
 /* --- Doc count badge --- */
 .doc-count-badge {

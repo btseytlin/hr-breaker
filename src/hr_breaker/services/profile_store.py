@@ -191,6 +191,34 @@ class ProfileStore:
             metadata=metadata,
         )
 
+    def update_note(self, profile_id: str, document_id: str, *, title: str, content_text: str) -> ProfileDocument | None:
+        doc = self.get_document(profile_id, document_id)
+        if doc is None or doc.kind != "note":
+            return None
+
+        metadata = {
+            key: value
+            for key, value in doc.metadata.items()
+            if key not in {"extraction", "extraction_status"}
+        }
+        updated = doc.model_copy(
+            update={
+                "title": title.strip(),
+                "source_name": title.strip(),
+                "content_text": content_text,
+                "metadata": metadata,
+                "timestamp": datetime.now(),
+            }
+        )
+        self._write_json_atomically(
+            self._document_path(profile_id, document_id),
+            updated.model_dump_json(indent=2),
+        )
+        profile = self.get_profile(profile_id)
+        if profile is not None:
+            self.save_profile(profile)
+        return updated
+
     def add_document(
         self,
         profile_id: str,

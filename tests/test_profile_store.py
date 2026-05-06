@@ -67,6 +67,34 @@ def test_profile_store_deduplicates_matching_uploads_and_updates_timestamp(tmp_p
     assert note.source_name == "Hackathon"
 
 
+def test_profile_store_updates_note_and_clears_stale_extraction(tmp_path):
+    store = ProfileStore(root_dir=tmp_path)
+    profile = store.create_profile("Jane Doe")
+    note = store.add_note(
+        profile.id,
+        title="Hackathon",
+        content_text="Won first place.",
+        metadata={"extraction": {"summary": ["old"]}, "extraction_status": "done", "keep": "yes"},
+    )
+
+    updated = store.update_note(
+        profile.id,
+        note.id,
+        title="Awards",
+        content_text="Won second place.",
+    )
+    reloaded = store.get_document(profile.id, note.id)
+
+    assert updated is not None
+    assert reloaded is not None
+    assert reloaded.title == "Awards"
+    assert reloaded.source_name == "Awards"
+    assert reloaded.content_text == "Won second place."
+    assert "extraction" not in reloaded.metadata
+    assert "extraction_status" not in reloaded.metadata
+    assert reloaded.metadata["keep"] == "yes"
+
+
 @pytest.mark.asyncio
 async def test_extract_document_content_does_not_recreate_deleted_document(tmp_path):
     store = ProfileStore(root_dir=tmp_path)

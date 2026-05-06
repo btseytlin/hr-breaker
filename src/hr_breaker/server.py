@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from pydantic_ai.exceptions import ModelHTTPError
 
 from hr_breaker.agents import extract_name, parse_job_posting
-from hr_breaker.config import get_settings, logger, settings_override
+from hr_breaker.config import custom_api_base_settings_field, get_settings, logger, settings_override
 from hr_breaker.models import (
     GeneratedPDF,
     ResumeSource,
@@ -128,7 +128,7 @@ class CreateProfileRequest(BaseModel):
 
 
 class ProfileActionRequest(LLMOverrideRequest):
-    pass
+    doc_ids: list[str] | None = None
 
 
 class SynthesizeProfileRequest(ProfileActionRequest):
@@ -137,6 +137,11 @@ class SynthesizeProfileRequest(ProfileActionRequest):
 
 
 class AddNoteRequest(BaseModel):
+    title: str
+    content: str
+
+
+class UpdateNoteRequest(BaseModel):
     title: str
     content: str
 
@@ -489,6 +494,7 @@ async def get_profile(profile_id: str):
             "id": d.id,
             "title": d.title,
             "kind": d.kind,
+            "content": d.content_text if d.kind == "note" else None,
             "included_by_default": d.included_by_default,
             "extraction_status": d.metadata.get("extraction_status", "pending"),
         }
@@ -562,6 +568,29 @@ async def add_profile_note(profile_id: str, req: AddNoteRequest):
     return {"id": doc.id, "title": doc.title, "kind": doc.kind}
 
 
+@app.patch("/api/profile/{profile_id}/note/{doc_id}")
+async def update_profile_note(profile_id: str, doc_id: str, req: UpdateNoteRequest):
+    from hr_breaker.services.profile_store import ProfileStore
+    from hr_breaker.services.extraction_worker import extraction_worker
+    store = ProfileStore()
+    doc = store.get_document(profile_id, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.kind != "note":
+        raise HTTPException(status_code=400, detail="Only notes can be edited")
+    if not req.title.strip():
+        raise HTTPException(status_code=400, detail="Note title is required")
+
+    if req.title.strip() == doc.title and req.content.strip() == (doc.content_text or ""):
+        return {"id": doc.id, "title": doc.title, "kind": doc.kind, "content": doc.content_text}
+    extraction_worker.cancel([doc_id])
+    updated = store.update_note(profile_id, doc_id, title=req.title.strip(), content_text=req.content.strip())
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    extraction_worker.submit(profile_id, [updated.id])
+    return {"id": updated.id, "title": updated.title, "kind": updated.kind, "content": updated.content_text}
+
+
 @app.get("/api/profile/{profile_id}/extraction-status")
 async def profile_extraction_status(profile_id: str):
     from hr_breaker.services.profile_store import ProfileStore
@@ -589,8 +618,17 @@ async def re_extract_profile(profile_id: str, req: ProfileActionRequest | None =
     if not store.get_profile(profile_id):
         raise HTTPException(status_code=404, detail="Profile not found")
     documents = store.list_documents(profile_id)
-    doc_ids = [d.id for d in documents]
-    overrides = _build_overrides(req or ProfileActionRequest())
+    all_doc_ids = [d.id for d in documents]
+    requested = (req or ProfileActionRequest()).doc_ids
+    doc_ids = [did for did in requested if did in set(all_doc_ids)] if requested else all_doc_ids
+    if not doc_ids:
+        return JSONResponse(status_code=400, content={"error": "No matching documents to extract"})
+
+
+    try:
+        overrides = _build_overrides(req or ProfileActionRequest())
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
     extraction_worker.resubmit(profile_id, doc_ids, overrides=overrides or None)
     return {"submitted": len(doc_ids)}
 
@@ -618,7 +656,10 @@ async def synthesize_profile(profile_id: str, req: SynthesizeProfileRequest):
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
-    overrides = _build_overrides(req)
+    try:
+        overrides = _build_overrides(req)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
     try:
         with settings_override(overrides):
             job_text = req.job_text or ""
@@ -678,12 +719,17 @@ async def optimize_endpoint(req: OptimizeRequest):
     if not source:
         return JSONResponse(status_code=400, content={"error": "Resume not found. Upload or paste first."})
 
+    try:
+        overrides = _build_overrides(req)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
     opt_id = str(uuid.uuid4())
     events: list[str] = []
 
     _active_optimization = {"id": opt_id, "task": None, "events": events, "subscribers": []}
 
-    task = asyncio.create_task(_run_optimization(req, source))
+    task = asyncio.create_task(_run_optimization(req, source, overrides))
     _active_optimization["task"] = task
 
     # Return SSE stream (first event is 'started' with the id)
@@ -795,6 +841,68 @@ def _selected_custom_provider_bases(req: OptimizeRequest) -> list[str]:
     return selected
 
 
+_MODEL_FIELD_BY_SCOPE = {
+    "pro": "pro_model",
+    "flash": "flash_model",
+    "embedding": "embedding_model",
+}
+
+_CANONICAL_CUSTOM_BASE_PROVIDERS = {"openai", "anthropic"}
+
+
+def _custom_base_url_usage_hint(provider: str) -> str:
+    if provider == "anthropic":
+        return "Use `anthropic/<model>` and set the Base URL separately for Anthropic-compatible endpoints."
+    return "Use `openai/<model>` and set the Base URL separately for OpenAI-compatible endpoints."
+
+
+def _unsupported_custom_base_url_message(scope: str) -> str:
+    if scope == "embedding":
+        return (
+            "Custom base URL is supported only for `openai/<model>` embeddings. "
+            "Use `openai/<model>` or disable the custom base URL for embeddings."
+        )
+    return (
+        f"Custom base URL is supported only for `openai/<model>` or `anthropic/<model>` {scope} models. "
+        f"Update the {scope} model path or disable the custom base URL."
+    )
+
+
+def _normalize_custom_base_model_path(model_name: str, *, base_url_enabled: bool) -> str:
+    normalized = model_name.strip()
+    parts = [part for part in normalized.split("/") if part]
+    if len(parts) >= 3 and parts[1] in _CANONICAL_CUSTOM_BASE_PROVIDERS:
+        provider = parts[1]
+        canonical = f"{provider}/{'/'.join(parts[2:])}"
+        if base_url_enabled:
+            return canonical
+        raise ValueError(f"Unsupported model path '{model_name}'. {_custom_base_url_usage_hint(provider)}")
+    return normalized
+
+
+def _normalize_request_model_routes(req: BaseModel | None) -> None:
+    if req is None:
+        return
+    providers = getattr(req, "providers", None) or {}
+    settings = get_settings()
+    for scope, model_field in _MODEL_FIELD_BY_SCOPE.items():
+        if not hasattr(req, model_field):
+            continue
+        provider_override = providers.get(scope)
+        base_url = (provider_override.base_url or "").strip() if provider_override else ""
+        explicit_model = getattr(req, model_field, None)
+        if explicit_model is None and not base_url:
+            continue
+        model_name = explicit_model or getattr(settings, model_field)
+        if not model_name:
+            continue
+        normalized_model = _normalize_custom_base_model_path(model_name, base_url_enabled=bool(base_url))
+        if base_url and custom_api_base_settings_field(scope, normalized_model) is None:
+            raise ValueError(_unsupported_custom_base_url_message(scope))
+        if explicit_model is not None:
+            setattr(req, model_field, normalized_model)
+
+
 def _normalize_optimization_error(exc: Exception, req: OptimizeRequest) -> str:
     if isinstance(exc, ModelHTTPError):
         text = str(exc)
@@ -807,11 +915,11 @@ def _normalize_optimization_error(exc: Exception, req: OptimizeRequest) -> str:
             custom_bases = _selected_custom_provider_bases(req)
             if custom_bases:
                 return (
-                    f"Custom OpenAI-compatible provider request failed before the model returned a usable response. "
+                    f"Custom provider request failed before the model returned a usable response. "
                     f"Check the base URL configuration ({'; '.join(custom_bases)}), API key, and that the endpoint supports models: {models}."
                 )
             return (
-                f"OpenAI-compatible provider request failed before the model returned a usable response. "
+                f"Provider request failed before the model returned a usable response. "
                 f"Check the API key, provider configuration, and model compatibility for: {models}."
             )
     return str(exc)
@@ -852,19 +960,22 @@ def _resolve_synthesis_documents(
 
 def _build_overrides(req: BaseModel | None) -> dict:
     """Build settings override dict from request fields."""
+    _normalize_request_model_routes(req)
     data = req.model_dump(exclude_none=True) if req is not None else {}
     overrides: dict = {}
     for field in ("pro_model", "flash_model", "embedding_model", "reasoning_effort", "api_keys"):
         if field in data:
             overrides[field] = data[field]
-    for scope, field_name in (
-        ("pro", "pro_openai_api_base"),
-        ("flash", "flash_openai_api_base"),
-        ("embedding", "embedding_openai_api_base"),
-    ):
+    for scope, model_field in _MODEL_FIELD_BY_SCOPE.items():
         provider_override = (data.get("providers") or {}).get(scope) or {}
-        if provider_override.get("base_url"):
-            overrides[field_name] = provider_override["base_url"]
+        base_url = (provider_override.get("base_url") or "").strip()
+        if not base_url:
+            continue
+        model_name = data.get(model_field) or getattr(get_settings(), model_field)
+        field_name = custom_api_base_settings_field(scope, model_name)
+        if field_name is None:
+            raise ValueError(_unsupported_custom_base_url_message(scope))
+        overrides[field_name] = base_url
     filter_thresholds = data.get("filter_thresholds")
     if filter_thresholds:
         threshold_map = {
@@ -916,9 +1027,8 @@ def _request_from_form(
 
 
 
-async def _run_optimization(req: OptimizeRequest, source: ResumeSource):
+async def _run_optimization(req: OptimizeRequest, source: ResumeSource, overrides: dict):
     global _active_optimization
-    overrides = _build_overrides(req)
     with settings_override(overrides):
         await _run_optimization_inner(req, source)
 
