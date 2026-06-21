@@ -93,8 +93,8 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("EMBEDDING_OPENAI_API_BASE"),
     )
 
-    pro_model: str = "gemini/gemini-3-pro-preview"
-    flash_model: str = "gemini/gemini-3-flash-preview"
+    pro_model: str = "openrouter/qwen/qwen3.7-plus"
+    flash_model: str = "openrouter/qwen/qwen3.6-flash"
     reasoning_effort: str = "medium"
     max_tokens: int | None = Field(
         default=None,
@@ -138,7 +138,7 @@ class Settings(BaseSettings):
     keyword_max_missing_display: int = 10
 
     # Embedding settings
-    embedding_model: str = "openrouter/google/gemini-embedding-001"
+    embedding_model: str = "openrouter/baai/bge-m3"
     embedding_output_dimensionality: int = 768
 
     # Profile archive settings

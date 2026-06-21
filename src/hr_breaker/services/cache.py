@@ -46,15 +46,17 @@ class ResumeCache:
         return self._path(checksum).exists()
 
     def list_all(self) -> list[ResumeSource]:
-        resumes = []
-        paths = sorted(self.cache_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-        for path in paths:
+        entries: list[tuple[int, datetime, ResumeSource]] = []
+        for path in self.cache_dir.glob("*.json"):
             try:
+                stat = path.stat()
                 data = json.loads(path.read_text(encoding="utf-8"))
-                resumes.append(ResumeSource(**data))
+                resume = ResumeSource(**data)
+                entries.append((stat.st_mtime_ns, resume.timestamp, resume))
             except Exception:
                 continue
-        return resumes
+        entries.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [resume for _, _, resume in entries]
 
 
 class JobCache:

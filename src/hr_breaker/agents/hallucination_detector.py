@@ -108,6 +108,7 @@ async def detect_hallucinations(
     source: ResumeSource,
     no_shame: bool = False,
     language: Language | None = None,
+    threshold: float | None = None,
 ) -> FilterResult:
     """Detect hallucinations in optimized resume vs original."""
     # Use html or data depending on what's available
@@ -151,7 +152,7 @@ The optimized resume is written in {language.english_name} while the original ma
 Return a no_hallucination_score (0.0-1.0) based on how faithful the optimized version is to the original.
 List any concerns but remember: light assumptions about related technologies are acceptable."""
 
-    threshold = 0.6 if no_shame else 0.9
+    effective_threshold = threshold if threshold is not None else (0.6 if no_shame else 0.9)
     agent = get_hallucination_agent(no_shame=no_shame)
     result = await run_tracked_agent(agent, prompt, component="HallucinationChecker")
 
@@ -162,16 +163,16 @@ List any concerns but remember: light assumptions about related technologies are
 
     if r.concerns:
         issues.extend(r.concerns)
-    if r.no_hallucination_score < threshold:
+    if r.no_hallucination_score < effective_threshold:
         suggestions.append(
-            f"Score {r.no_hallucination_score:.2f} below {threshold} threshold. {r.reasoning}"
+            f"Score {r.no_hallucination_score:.2f} below {effective_threshold:.2f} threshold. {r.reasoning}"
         )
 
     return FilterResult(
         filter_name="HallucinationChecker",
-        passed=r.no_hallucination_score >= threshold,
+        passed=r.no_hallucination_score >= effective_threshold,
         score=r.no_hallucination_score,
-        threshold=threshold,
+        threshold=effective_threshold,
         issues=issues,
         suggestions=suggestions,
     )

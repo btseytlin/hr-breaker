@@ -7,6 +7,7 @@ import pytest
 
 from hr_breaker.services.llm_providers import (
     _fetch_gemini_models,
+    _fetch_openrouter_embedding_models,
     fetch_provider_catalog,
     _fetch_anthropic_models,
     _litellm_prefix,
@@ -61,6 +62,62 @@ async def test_fetch_gemini_models_uses_query_param_auth_only():
         "url": "https://generativelanguage.googleapis.com/v1beta/models",
         "params": {"key": "gem-test"},
         "headers": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_provider_catalog_uses_openrouter_embedding_models_endpoint():
+    with (
+        patch(
+            "hr_breaker.services.llm_providers._fetch_openai_models",
+            new=AsyncMock(return_value=([{"value": "openrouter/openai/gpt-5-mini", "label": "openai/gpt-5-mini"}], [])),
+        ) as mock_chat,
+        patch(
+            "hr_breaker.services.llm_providers._fetch_openrouter_embedding_models",
+            new=AsyncMock(return_value=[{"value": "openrouter/openai/text-embedding-3-small", "label": "Text Embedding 3 Small"}]),
+        ) as mock_embed,
+    ):
+        result = await fetch_provider_catalog(provider="openrouter", api_key="sk-or-test")
+
+    mock_chat.assert_awaited_once_with("sk-or-test", "https://openrouter.ai/api/v1", litellm_prefix="openrouter/")
+    mock_embed.assert_awaited_once_with("sk-or-test", "https://openrouter.ai/api/v1")
+    assert result["status"]["state"] == "connected"
+    assert result["chat_models"] == [{"value": "openrouter/openai/gpt-5-mini", "label": "openai/gpt-5-mini"}]
+    assert result["embedding_models"] == [
+        {"value": "openrouter/openai/text-embedding-3-small", "label": "Text Embedding 3 Small"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fetch_openrouter_embedding_models_uses_embeddings_endpoint():
+    recorded = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": "google/gemini-embedding-2", "name": "Google: Gemini Embedding 2"}]}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, headers=None):
+            recorded["url"] = url
+            recorded["headers"] = headers
+            return FakeResponse()
+
+    with patch("hr_breaker.services.llm_providers.httpx.AsyncClient", return_value=FakeClient()):
+        models = await _fetch_openrouter_embedding_models("sk-or-test", "https://openrouter.ai/api/v1")
+
+    assert models == [{"value": "openrouter/google/gemini-embedding-2", "label": "Google: Gemini Embedding 2"}]
+    assert recorded == {
+        "url": "https://openrouter.ai/api/v1/embeddings/models",
+        "headers": {"Authorization": "Bearer sk-or-test"},
     }
 
 

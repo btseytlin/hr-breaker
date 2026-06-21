@@ -1,6 +1,6 @@
 from litellm import aembedding as litellm_aembedding
 
-from hr_breaker.config import get_embedding_api_base, get_settings
+from hr_breaker.config import get_embedding_api_base, get_settings, has_api_key_for_model
 from hr_breaker.filters.base import BaseFilter
 from hr_breaker.filters.registry import FilterRegistry
 from hr_breaker.models import FilterResult, JobPosting, OptimizedResume, ResumeSource
@@ -42,6 +42,16 @@ class VectorSimilarityMatcher(BaseFilter):
 
         resume_text = optimized.pdf_text
         job_text = f"{job.title} {job.description} {' '.join(job.requirements)}"
+
+        if not has_api_key_for_model(settings.embedding_model):
+            return FilterResult(
+                filter_name=self.name,
+                passed=True,
+                score=1.0,
+                threshold=self.threshold,
+                issues=[f"Embedding API key not configured for {settings.embedding_model}; skipped vector similarity"],
+                suggestions=[],
+            )
 
         try:
             api_base = get_embedding_api_base()

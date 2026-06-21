@@ -564,7 +564,7 @@
                                    @keydown.enter.prevent="settings.proModel = q; open = false; $event.target.blur()"
                                    @keydown.escape="open = false; $event.target.blur()"
                                    @blur="setTimeout(() => { if (q) settings.proModel = q; open = false }, 150)"
-                                   placeholder="e.g. gemini/gemini-3-pro-preview">
+                                   placeholder="e.g. openrouter/qwen/qwen3.7-plus">
                             <div class="combobox-list" x-show="open && chatModelsForText(q).length > 0">
                                 <template x-for="m in chatModelsForText(q).filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
                                     <div class="combobox-option"
@@ -597,7 +597,7 @@
                                    @keydown.enter.prevent="settings.flashModel = q; open = false; $event.target.blur()"
                                    @keydown.escape="open = false; $event.target.blur()"
                                    @blur="setTimeout(() => { if (q) settings.flashModel = q; open = false }, 150)"
-                                   placeholder="e.g. gemini/gemini-3-flash-preview">
+                                   placeholder="e.g. openrouter/qwen/qwen3.6-flash">
                             <div class="combobox-list" x-show="open && chatModelsForText(q).length > 0">
                                 <template x-for="m in chatModelsForText(q).filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
                                     <div class="combobox-option"
@@ -630,7 +630,7 @@
                                    @keydown.enter.prevent="settings.embeddingModel = q; open = false; $event.target.blur()"
                                    @keydown.escape="open = false; $event.target.blur()"
                                    @blur="setTimeout(() => { if (q) settings.embeddingModel = q; open = false }, 150)"
-                                   placeholder="e.g. openrouter/google/gemini-embedding-001">
+                                   placeholder="e.g. openrouter/baai/bge-m3">
                             <div class="combobox-list" x-show="open && embeddingModelsForText(q).length > 0">
                                 <template x-for="m in embeddingModelsForText(q).filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.value.toLowerCase().includes(q.toLowerCase()))" :key="m.value">
                                     <div class="combobox-option"

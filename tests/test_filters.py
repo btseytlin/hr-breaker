@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from hr_breaker.agents.hallucination_detector import HallucinationResult
 from hr_breaker.filters import (
     FilterRegistry,
     HallucinationChecker,
@@ -93,6 +94,53 @@ def test_filter_threshold_property():
     assert matcher.threshold == 0.25
 
 
+@pytest.mark.asyncio
+async def test_hallucination_checker_uses_runtime_threshold_for_pass_and_suggestions(
+    source_resume, job_posting
+):
+    optimized = OptimizedResume(
+        html="<div>Backend Engineer with Python Django experience</div>",
+        source_checksum=source_resume.checksum,
+        pdf_text="Backend Engineer with Python Django experience",
+    )
+    mock_settings = MagicMock()
+    mock_settings.filter_hallucination_threshold = 0.3
+    agent_result = type(
+        "AgentResult",
+        (),
+        {
+            "output": HallucinationResult(
+                no_hallucination_score=0.8,
+                concerns=["Provider names not traceable"],
+                reasoning="Mostly faithful with light additions",
+            )
+        },
+    )()
+
+    with (
+        patch(
+            "hr_breaker.filters.hallucination_checker.get_settings",
+            return_value=mock_settings,
+        ),
+        patch(
+            "hr_breaker.agents.hallucination_detector.get_hallucination_agent",
+            return_value=object(),
+        ),
+        patch(
+            "hr_breaker.agents.hallucination_detector.run_tracked_agent",
+            new_callable=AsyncMock,
+            return_value=agent_result,
+        ),
+    ):
+        result = await HallucinationChecker().evaluate(optimized, job_posting, source_resume)
+
+    assert result.passed
+    assert result.score == 0.8
+    assert result.threshold == 0.3
+    assert result.issues == ["Provider names not traceable"]
+    assert result.suggestions == []
+
+
 def test_filter_priorities_unique():
     """All filter priorities should be unique for deterministic execution order."""
     filters = FilterRegistry.all()
@@ -139,6 +187,10 @@ async def test_vector_similarity_matcher_uses_settings_embedding_config(
         patch(
             "hr_breaker.filters.vector_similarity_matcher.get_settings",
             return_value=mock_settings,
+        ),
+        patch(
+            "hr_breaker.filters.vector_similarity_matcher.has_api_key_for_model",
+            return_value=True,
         ),
         patch(
             "hr_breaker.filters.vector_similarity_matcher.run_with_retry",

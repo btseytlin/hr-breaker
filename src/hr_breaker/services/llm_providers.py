@@ -54,6 +54,9 @@ async def fetch_provider_catalog(
         elif provider == "anthropic":
             resolved_base = (base_url or "").strip() or default_base or "https://api.anthropic.com"
             chat, embed = await _fetch_anthropic_models(resolved_key, resolved_base)
+        elif provider == "openrouter":
+            resolved_base = (base_url or "").strip() or default_base or "https://openrouter.ai/api/v1"
+            chat, embed = await _fetch_openrouter_models(resolved_key, resolved_base.rstrip("/"))
         else:
             resolved_base = (base_url or "").strip() or default_base or "https://api.openai.com/v1"
             resolved_base = resolved_base.rstrip("/")
@@ -150,6 +153,31 @@ async def _fetch_anthropic_models(api_key: str, base_url: str) -> tuple[list[dic
         label = model.get("display_name") or model_id
         chat.append({"value": f"anthropic/{model_id}", "label": str(label)})
     return _dedup_sort(chat), []
+
+
+async def _fetch_openrouter_models(api_key: str, base_url: str) -> tuple[list[dict], list[dict]]:
+    chat, _ = await _fetch_openai_models(api_key, base_url, litellm_prefix="openrouter/")
+    embed = await _fetch_openrouter_embedding_models(api_key, base_url)
+    return chat, embed
+
+
+async def _fetch_openrouter_embedding_models(api_key: str, base_url: str) -> list[dict]:
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        resp = await client.get(
+            f"{base_url}/embeddings/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+
+    embed: list[dict] = []
+    for model in data:
+        model_id = model.get("id", "")
+        if not model_id:
+            continue
+        label = model.get("name") or model_id
+        embed.append({"value": f"openrouter/{model_id}", "label": str(label)})
+    return _dedup_sort(embed)
 
 
 async def _fetch_openai_models(

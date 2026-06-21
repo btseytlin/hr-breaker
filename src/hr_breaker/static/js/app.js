@@ -263,10 +263,31 @@ document.addEventListener('alpine:init', () => {
                 this.appSettings.reasoningEffort = data.reasoning_effort || '';
                 this.appSettings.apiKeysSet = data.api_keys_set || {};
                 this.appSettings.filterThresholds = data.filter_thresholds || {};
-                // Always prefill models/reasoning from server if not customized
-                if (!this.settings.proModel) this.settings.proModel = data.pro_model || '';
-                if (!this.settings.flashModel) this.settings.flashModel = data.flash_model || '';
-                if (!this.settings.embeddingModel) this.settings.embeddingModel = data.embedding_model || '';
+                // Always prefill models/reasoning from server if not customized.
+                const legacyProModels = new Set([
+                    'gemini/gemini-3-pro-preview',
+                    'openrouter/google/gemini-3-pro-preview',
+                    'openrouter/google/gemini-3.1-pro-preview',
+                ]);
+                const legacyFlashModels = new Set([
+                    'gemini/gemini-3-flash-preview',
+                    'openrouter/google/gemini-3-flash-preview',
+                ]);
+                const legacyEmbeddingModels = new Set([
+                    'gemini/gemini-embedding-001',
+                    'gemini/text-embedding-004',
+                    'openrouter/google/gemini-embedding-001',
+                    'openrouter/google/gemini-embedding-2',
+                ]);
+                if (!this.settings.proModel || legacyProModels.has(this.settings.proModel)) {
+                    this.settings.proModel = data.pro_model || '';
+                }
+                if (!this.settings.flashModel || legacyFlashModels.has(this.settings.flashModel)) {
+                    this.settings.flashModel = data.flash_model || '';
+                }
+                if (!this.settings.embeddingModel || legacyEmbeddingModels.has(this.settings.embeddingModel)) {
+                    this.settings.embeddingModel = data.embedding_model || '';
+                }
                 if (!this.settings.reasoningEffort) this.settings.reasoningEffort = data.reasoning_effort || '';
                 if (!this._restoredFromStorage) {
                     this.settings.language = data.default_language;

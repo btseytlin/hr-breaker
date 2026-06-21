@@ -37,7 +37,7 @@ uv sync
 
 # Configure
 cp .env.example .env
-# Edit .env and add your GEMINI_API_KEY (or configure another LLM provider)
+# Edit .env and add your OPENROUTER_API_KEY
 
 # Run web UI (auto-opens browser at http://localhost:8899)
 uv run hr-breaker serve
@@ -91,7 +91,7 @@ uv run hr-breaker list
 
 ## Configuration
 
-Copy `.env.example` to `.env` and set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`). Models are configurable via LiteLLM — any provider (OpenAI, Anthropic, Moonshot, etc.) works by setting `PRO_MODEL`, `FLASH_MODEL`, and the corresponding API key. To cap expensive responses, you can also set `MAX_TOKENS` (or the alias `MAX_OUTPUT_TOKENS`). See `.env.example` for all options.
+Copy `.env.example` to `.env` and set `OPENROUTER_API_KEY`. The default models use OpenRouter (`qwen/qwen3.7-plus`, `qwen/qwen3.6-flash`, and `baai/bge-m3`), but models are configurable via LiteLLM by setting `PRO_MODEL`, `FLASH_MODEL`, `EMBEDDING_MODEL`, and the corresponding API key. To cap expensive responses, you can also set `MAX_TOKENS` (or the alias `MAX_OUTPUT_TOKENS`). See `.env.example` for all options.
 
 ---
 
