@@ -36,6 +36,10 @@ document.addEventListener('alpine:init', () => {
             language: 'from_job',
             maxIterations: 5,
             instructions: '',
+            llmBackend: '',
+            codexModel: '',
+            codexFlashModel: '',
+            codexReasoningEffort: '',
             // Per-run overrides
             proModel: '',
             flashModel: '',
@@ -49,12 +53,30 @@ document.addEventListener('alpine:init', () => {
         // App settings from server
         appSettings: {
             languageModes: [],
+            llmBackend: 'litellm',
+            codexModel: '',
+            codexFlashModel: '',
+            codexReasoningEffort: '',
             proModel: '',
             flashModel: '',
             embeddingModel: '',
             reasoningEffort: '',
             apiKeysSet: { gemini: false, openrouter: false, openai: false, anthropic: false, moonshot: false },
             filterThresholds: {},
+        },
+
+        // Local Codex CLI availability/authentication status
+        codexStatus: {
+            loading: false,
+            loaded: false,
+            installed: false,
+            authenticated: false,
+            authMode: '',
+            version: '',
+            message: '',
+            models: [],
+            defaultModel: '',
+            catalogError: '',
         },
 
         // Optimization state
@@ -116,7 +138,7 @@ document.addEventListener('alpine:init', () => {
 
         // Drawer state
         drawerOpen: false,
-        drawerSections: { options: true, models: true, apiKeys: false, thresholds: false, history: true },
+        drawerSections: { options: true, backend: true, models: true, apiKeys: false, thresholds: false, history: true },
         showPdfPreview: false,
 
         // Computed getters
@@ -131,7 +153,7 @@ document.addEventListener('alpine:init', () => {
         },
 
         get thresholdEntries() {
-            return [
+            const entries = [
                 ['hallucination', 'Hallucination'],
                 ['keyword', 'Keyword Match'],
                 ['llm', 'LLM Check'],
@@ -139,6 +161,9 @@ document.addEventListener('alpine:init', () => {
                 ['ai_generated', 'AI Generated'],
                 ['translation', 'Translation Quality'],
             ];
+            return this.effectiveLlmBackend === 'codex_cli'
+                ? entries.filter(([key]) => key !== 'vector')
+                : entries;
         },
 
         get profileEntries() {
@@ -147,6 +172,126 @@ document.addEventListener('alpine:init', () => {
 
         get legacyResumeEntries() {
             return this.cachedResumes.filter(r => r.source_type !== 'profile');
+        },
+
+        get effectiveLlmBackend() {
+            return this.settings.llmBackend || this.appSettings.llmBackend || 'litellm';
+        },
+
+        get codexStatusText() {
+            if (this.codexStatus.loading) return 'Checking Codex CLI...';
+            if (!this.codexStatus.loaded) return 'Status has not been checked yet.';
+            if (!this.codexStatus.installed) {
+                return this.codexStatus.message || 'Codex CLI is not installed.';
+            }
+
+            const version = this.codexStatus.version ? ` ${this.codexStatus.version}` : '';
+            if (!this.codexStatus.authenticated) {
+                return this.codexStatus.message || `Codex CLI${version} is not authenticated.`;
+            }
+
+            const authMode = this.codexStatus.authMode ? ` via ${this.codexStatus.authMode}` : '';
+            const catalog = this.codexStatus.models.length
+                ? ` ${this.codexStatus.models.length} models available.`
+                : '';
+            return this.codexStatus.message || `Codex CLI${version} is ready${authMode}.${catalog}`;
+        },
+
+        get codexStatusClass() {
+            if (this.codexStatus.loading || !this.codexStatus.loaded) return 'info';
+            if (!this.codexStatus.installed) return 'error';
+            if (!this.codexStatus.authenticated) return 'warn';
+            if (this.codexStatus.catalogError) return 'warn';
+            return '';
+        },
+
+        get codexModelOptions() {
+            const options = [...this.codexStatus.models];
+            for (const value of [this.settings.codexModel, this.settings.codexFlashModel]) {
+                if (value && !options.some(model => model.value === value)) {
+                    options.push({
+                        value,
+                        label: `${value} (configured)`,
+                        description: 'Configured outside the visible Codex model catalog.',
+                        is_default: false,
+                    });
+                }
+            }
+            return options;
+        },
+
+        get reasoningEffortOptions() {
+            return [
+                { value: '', label: 'Default (per model)' },
+                ...this.codexReasoningEfforts.map(value => ({
+                    value,
+                    label: this._reasoningEffortLabel(value),
+                })),
+            ];
+        },
+
+        get selectedCodexModels() {
+            return [
+                ['pro', this.settings.codexModel],
+                ['flash', this.settings.codexFlashModel],
+            ].map(([scope, value]) => ({
+                scope,
+                model: this.codexStatus.models.find(item => item.value === value),
+            }));
+        },
+
+        get codexReasoningEfforts() {
+            const selected = this.selectedCodexModels;
+            if (selected.some(({ model }) => !model)) {
+                const fallback = ['low', 'medium', 'high'];
+                const configured = this.settings.codexReasoningEffort;
+                if (configured && !fallback.includes(configured)) fallback.push(configured);
+                return fallback;
+            }
+            const effortLists = selected
+                .map(({ model }) => model?.supported_reasoning_efforts)
+                .filter(efforts => Array.isArray(efforts) && efforts.length > 0);
+            if (!effortLists.length) return ['low', 'medium', 'high'];
+
+            const [first, ...rest] = effortLists;
+            return [...new Set(first)].filter(
+                effort => rest.every(supported => supported.includes(effort))
+            );
+        },
+
+        get codexReasoningHint() {
+            const selected = this.selectedCodexModels;
+            if (selected.some(({ model }) => !model)) {
+                return 'Reasoning metadata is unavailable for a configured model.';
+            }
+            const defaults = selected.map(({ scope, model }) => (
+                `${scope}: ${model.default_reasoning_effort || 'Codex default'}`
+            ));
+            return `Model defaults — ${defaults.join('; ')}. Explicit values are supported by both models.`;
+        },
+
+        _reasoningEffortLabel(value) {
+            const labels = {
+                none: 'None',
+                minimal: 'Minimal',
+                low: 'Low',
+                medium: 'Medium',
+                high: 'High',
+                xhigh: 'Extra high',
+                max: 'Max',
+                ultra: 'Ultra',
+            };
+            return labels[value] || value;
+        },
+
+        codexModelHint(value) {
+            const model = this.codexModelOptions.find(item => item.value === value);
+            if (!model) {
+                return this.codexStatus.catalogError || 'Load the Codex model catalog to choose a model.';
+            }
+            const description = (model.description || model.label).replace(/[.\s]+$/, '');
+            const defaultSuffix = model.is_default ? ' Codex default.' : '';
+            return `${description}.${defaultSuffix}`.trim();
         },
 
         get editingProfile() {
@@ -186,8 +331,12 @@ document.addEventListener('alpine:init', () => {
             this.$watch('settings', () => this._saveToStorage());
             this.$watch('resume.checksum', () => this._saveToStorage());
 
-            // Load model catalogs for detected providers
-            await this.fetchAllCatalogs();
+            if (this.effectiveLlmBackend === 'codex_cli') {
+                await this.refreshCodexStatus();
+            } else {
+                // Load model catalogs for detected API providers
+                await this.fetchAllCatalogs();
+            }
         },
 
         _storageKey: 'hr-breaker-state',
@@ -257,6 +406,10 @@ document.addEventListener('alpine:init', () => {
                 const resp = await fetch('/api/settings');
                 const data = await resp.json();
                 this.appSettings.languageModes = data.language_modes;
+                this.appSettings.llmBackend = data.llm_backend || 'litellm';
+                this.appSettings.codexModel = data.codex_model || '';
+                this.appSettings.codexFlashModel = data.codex_flash_model || '';
+                this.appSettings.codexReasoningEffort = data.codex_reasoning_effort || '';
                 this.appSettings.proModel = data.pro_model;
                 this.appSettings.flashModel = data.flash_model;
                 this.appSettings.embeddingModel = data.embedding_model || '';
@@ -264,6 +417,12 @@ document.addEventListener('alpine:init', () => {
                 this.appSettings.apiKeysSet = data.api_keys_set || {};
                 this.appSettings.filterThresholds = data.filter_thresholds || {};
                 // Always prefill models/reasoning from server if not customized
+                if (!this.settings.llmBackend) this.settings.llmBackend = data.llm_backend || 'litellm';
+                if (!this.settings.codexModel) this.settings.codexModel = data.codex_model || '';
+                if (!this.settings.codexFlashModel) this.settings.codexFlashModel = data.codex_flash_model || '';
+                if (!this.settings.codexReasoningEffort) {
+                    this.settings.codexReasoningEffort = data.codex_reasoning_effort || '';
+                }
                 if (!this.settings.proModel) this.settings.proModel = data.pro_model || '';
                 if (!this.settings.flashModel) this.settings.flashModel = data.flash_model || '';
                 if (!this.settings.embeddingModel) this.settings.embeddingModel = data.embedding_model || '';
@@ -342,7 +501,12 @@ document.addEventListener('alpine:init', () => {
         // --- Resume actions ---
 
         _resumeRunOverrides() {
+            const overrides = {
+                ...this._llmBackendOverrides(),
+            };
+            if (this.effectiveLlmBackend === 'codex_cli') return overrides;
             return {
+                ...overrides,
                 flash_model: this.settings.flashModel || null,
                 reasoning_effort: this.settings.reasoningEffort || null,
                 api_keys: this._nonEmptyApiKeys() || null,
@@ -351,6 +515,12 @@ document.addEventListener('alpine:init', () => {
         },
 
         _appendRunOverridesToFormData(formData, overrides) {
+            if (overrides.llm_backend) formData.append('llm_backend', overrides.llm_backend);
+            if (overrides.codex_model) formData.append('codex_model', overrides.codex_model);
+            if (overrides.codex_flash_model) formData.append('codex_flash_model', overrides.codex_flash_model);
+            if (overrides.codex_reasoning_effort) {
+                formData.append('codex_reasoning_effort', overrides.codex_reasoning_effort);
+            }
             if (overrides.flash_model) formData.append('flash_model', overrides.flash_model);
             if (overrides.reasoning_effort) formData.append('reasoning_effort', overrides.reasoning_effort);
             if (overrides.api_keys) formData.append('api_keys_json', JSON.stringify(overrides.api_keys));
@@ -620,6 +790,7 @@ document.addEventListener('alpine:init', () => {
             this.optimization.abortController = abortController;
 
             const body = {
+                ...this._llmBackendOverrides(),
                 resume_checksum: this.resume.checksum,
                 job_text: this.job.text,
                 sequential: this.settings.sequential,
@@ -628,12 +799,14 @@ document.addEventListener('alpine:init', () => {
                 language: this.settings.language,
                 max_iterations: this.settings.maxIterations,
                 instructions: this.settings.instructions || null,
-                pro_model: this.settings.proModel || null,
-                flash_model: this.settings.flashModel || null,
-                embedding_model: this.settings.embeddingModel || null,
-                reasoning_effort: this.settings.reasoningEffort || null,
-                api_keys: this._nonEmptyApiKeys() || null,
-                providers: this._baseUrlOverrides(),
+                pro_model: this.effectiveLlmBackend === 'litellm' ? (this.settings.proModel || null) : null,
+                flash_model: this.effectiveLlmBackend === 'litellm' ? (this.settings.flashModel || null) : null,
+                embedding_model: this.effectiveLlmBackend === 'litellm' ? (this.settings.embeddingModel || null) : null,
+                reasoning_effort: this.effectiveLlmBackend === 'litellm'
+                    ? (this.settings.reasoningEffort || null)
+                    : null,
+                api_keys: this.effectiveLlmBackend === 'litellm' ? (this._nonEmptyApiKeys() || null) : null,
+                providers: this.effectiveLlmBackend === 'litellm' ? this._baseUrlOverrides() : null,
                 filter_thresholds: this.settings.thresholds,
             };
 
@@ -864,14 +1037,30 @@ document.addEventListener('alpine:init', () => {
             return hasAny ? keys : null;
         },
 
+        _llmBackendOverrides() {
+            const overrides = {
+                llm_backend: this.effectiveLlmBackend,
+            };
+            if (this.effectiveLlmBackend === 'codex_cli') {
+                overrides.codex_model = (this.settings.codexModel || '').trim() || null;
+                overrides.codex_flash_model = (this.settings.codexFlashModel || '').trim() || null;
+                overrides.codex_reasoning_effort = this.settings.codexReasoningEffort || null;
+            }
+            return overrides;
+        },
+
         _profileRunOverrides() {
             const overrides = {
+                ...this._llmBackendOverrides(),
+            };
+            if (this.effectiveLlmBackend === 'codex_cli') return overrides;
+            Object.assign(overrides, {
                 flash_model: this.settings.flashModel || null,
                 embedding_model: this.settings.embeddingModel || null,
                 reasoning_effort: this.settings.reasoningEffort || null,
                 api_keys: this._nonEmptyApiKeys() || null,
                 providers: this._baseUrlOverrides(),
-            };
+            });
             return overrides;
         },
 
@@ -1030,6 +1219,90 @@ document.addEventListener('alpine:init', () => {
             const entry = this._catalogEntry(provider);
             if (!entry || (!entry.chatModels?.length && !entry.embeddingModels?.length && entry.status !== 'connected')) {
                 this.fetchCatalog(provider);
+            }
+        },
+
+        async onLlmBackendChange() {
+            this._saveToStorage();
+            if (this.effectiveLlmBackend === 'codex_cli') {
+                await this.refreshCodexStatus();
+            } else {
+                await this.fetchAllCatalogs();
+            }
+        },
+
+        onCodexModelChange() {
+            this._reconcileCodexReasoningEffort();
+            this._saveToStorage();
+        },
+
+        _reconcileCodexReasoningEffort() {
+            const selected = this.settings.codexReasoningEffort;
+            if (
+                this.effectiveLlmBackend === 'codex_cli'
+                && selected
+                && this.selectedCodexModels.every(({ model }) => Boolean(model))
+                && !this.codexReasoningEfforts.includes(selected)
+            ) {
+                this.settings.codexReasoningEffort = '';
+            }
+        },
+
+        async refreshCodexStatus() {
+            if (this.codexStatus.loading) return;
+            this.codexStatus.loading = true;
+            let statusChecked = false;
+            try {
+                const resp = await fetch('/api/codex/status');
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || data.error || data.message || 'Status check failed');
+                statusChecked = true;
+                this.codexStatus.installed = Boolean(data.installed);
+                this.codexStatus.authenticated = Boolean(data.authenticated);
+                this.codexStatus.authMode = data.auth_mode || '';
+                this.codexStatus.version = data.version || '';
+                this.codexStatus.message = data.message || '';
+                this.codexStatus.loaded = true;
+                this.codexStatus.models = [];
+                this.codexStatus.defaultModel = '';
+                this.codexStatus.catalogError = '';
+
+                if (this.codexStatus.authenticated) {
+                    const catalogResp = await fetch('/api/codex/models');
+                    const catalog = await catalogResp.json();
+                    if (!catalogResp.ok) {
+                        throw new Error(catalog.detail || catalog.error || 'Model catalog failed');
+                    }
+                    this.codexStatus.models = catalog.models || [];
+                    this.codexStatus.defaultModel = catalog.default_model || '';
+                    const fallback = this.codexStatus.defaultModel
+                        || this.codexStatus.models[0]?.value
+                        || '';
+                    if (!this.settings.codexModel) {
+                        this.settings.codexModel = this.appSettings.codexModel || fallback;
+                    }
+                    if (!this.settings.codexFlashModel) {
+                        this.settings.codexFlashModel = this.appSettings.codexFlashModel
+                            || this.settings.codexModel
+                            || fallback;
+                    }
+                    this._reconcileCodexReasoningEffort();
+                }
+            } catch (e) {
+                const message = e instanceof Error ? e.message : String(e);
+                if (statusChecked && this.codexStatus.authenticated) {
+                    this.codexStatus.catalogError = message;
+                    this.codexStatus.message = `Codex CLI is ready, but models could not be loaded: ${message}`;
+                } else {
+                    this.codexStatus.installed = false;
+                    this.codexStatus.authenticated = false;
+                    this.codexStatus.authMode = '';
+                    this.codexStatus.version = '';
+                    this.codexStatus.message = message;
+                }
+                this.codexStatus.loaded = true;
+            } finally {
+                this.codexStatus.loading = false;
             }
         },
 
@@ -1286,7 +1559,11 @@ document.addEventListener('alpine:init', () => {
                 const resp = await fetch('/api/profile/' + this.profile.editingId + '/note', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ title: this.profile.noteTitle.trim(), content: this.profile.noteContent.trim() }),
+                    body: JSON.stringify({
+                        title: this.profile.noteTitle.trim(),
+                        content: this.profile.noteContent.trim(),
+                        ...this._profileRunOverrides(),
+                    }),
                 });
                 if (!resp.ok) {
                     const text = await resp.text();

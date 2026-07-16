@@ -26,6 +26,10 @@ from hr_breaker.models import (
     ResumeSource,
     ValidationResult,
 )
+from hr_breaker.services.llm_model import (
+    runtime_model_summary_lines,
+    runtime_reasoning_effort,
+)
 from hr_breaker.services.pdf_parser import extract_text_from_pdf_bytes
 from hr_breaker.services.renderer import RenderError, HTMLRenderer
 
@@ -40,16 +44,10 @@ _ = (
 )
 
 
-def _provider_for_model(model_name: str) -> str:
-    return model_name.split("/", 1)[0] if "/" in model_name else "unknown"
-
-
 def _optimization_settings_summary_lines(settings, *, max_iterations: int, parallel: bool, no_shame: bool) -> list[str]:
     return [
-        f"Pro model: {settings.pro_model} / {_provider_for_model(settings.pro_model)}",
-        f"Flash model: {settings.flash_model} / {_provider_for_model(settings.flash_model)}",
-        f"Embedding model: {settings.embedding_model} / {_provider_for_model(settings.embedding_model)}",
-        f"Optimization mode: {'parallel' if parallel else 'sequential'}, reasoning: {settings.reasoning_effort}, max iterations: {max_iterations}, no-shame: {no_shame}",
+        *runtime_model_summary_lines(),
+        f"Optimization mode: {'parallel' if parallel else 'sequential'}, reasoning: {runtime_reasoning_effort()}, max iterations: {max_iterations}, no-shame: {no_shame}",
     ]
 
 def _optimizer_changes_log_message(changes: list[str]) -> str:

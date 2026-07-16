@@ -1,5 +1,8 @@
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
+
 from hr_breaker.server import app
 
 
@@ -17,6 +20,10 @@ async def test_settings_returns_all_configurable_fields(client):
     data = resp.json()
     # Existing
     assert "language_modes" in data
+    assert data["llm_backend"] in {"litellm", "codex_cli"}
+    assert "codex_model" in data
+    assert "codex_flash_model" in data
+    assert "codex_reasoning_effort" in data
     assert "pro_model" in data
     assert "flash_model" in data
     assert "max_iterations" in data
@@ -33,3 +40,28 @@ async def test_settings_returns_all_configurable_fields(client):
     keys = data["api_keys_set"]
     for key in ["gemini", "openrouter", "openai", "anthropic", "moonshot"]:
         assert isinstance(keys[key], bool)
+
+
+@pytest.mark.asyncio
+async def test_codex_models_returns_current_cli_catalog(client):
+    catalog = {
+        "models": [
+            {
+                "value": "gpt-current",
+                "label": "GPT Current",
+                "description": "Current model.",
+                "is_default": True,
+                "default_reasoning_effort": "medium",
+                "supported_reasoning_efforts": ["low", "medium", "high"],
+            }
+        ],
+        "default_model": "gpt-current",
+    }
+    with patch(
+        "hr_breaker.services.codex_cli.get_codex_model_catalog",
+        new=AsyncMock(return_value=catalog),
+    ):
+        response = await client.get("/api/codex/models")
+
+    assert response.status_code == 200
+    assert response.json() == catalog

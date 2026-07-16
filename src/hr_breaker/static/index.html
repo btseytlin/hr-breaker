@@ -544,8 +544,88 @@
                 </div>
             </div>
 
-            <!-- Models -->
+            <!-- LLM Backend -->
             <div class="sidebar-section">
+                <div class="sidebar-section-title" @click="drawerSections.backend = !drawerSections.backend">
+                    <span>LLM Backend</span>
+                    <span class="chevron" :class="drawerSections.backend && 'open'"></span>
+                </div>
+                <div class="sidebar-section-body" x-show="drawerSections.backend">
+                    <div class="setting-field">
+                        <label for="opt-llm-backend">Run with</label>
+                        <select id="opt-llm-backend" x-model="settings.llmBackend" @change="onLlmBackendChange()">
+                            <option value="litellm">API providers</option>
+                            <option value="codex_cli">Codex CLI (ChatGPT subscription)</option>
+                        </select>
+                    </div>
+
+                    <div class="setting-field">
+                        <label for="opt-reasoning">Reasoning effort</label>
+                        <select id="opt-reasoning" :value="settings.codexReasoningEffort"
+                                @change="settings.codexReasoningEffort = $event.target.value"
+                                x-show="settings.llmBackend === 'codex_cli'">
+                            <template x-for="effort in reasoningEffortOptions" :key="effort.value || 'default'">
+                                <option :value="effort.value"
+                                        :selected="effort.value === settings.codexReasoningEffort"
+                                        x-text="effort.label"></option>
+                            </template>
+                        </select>
+                        <select id="opt-api-reasoning" x-model="settings.reasoningEffort"
+                                x-show="settings.llmBackend === 'litellm'">
+                            <option value="">Default</option>
+                            <option value="none">None</option>
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                        </select>
+                        <div class="sidebar-hint" style="margin-top:3px"
+                             x-show="settings.llmBackend === 'codex_cli'"
+                             x-text="codexReasoningHint"></div>
+                    </div>
+
+                    <div x-show="settings.llmBackend === 'codex_cli'">
+                        <div class="setting-field">
+                            <label for="opt-codex-model">Codex pro model</label>
+                            <select id="opt-codex-model" :value="settings.codexModel"
+                                    @change="settings.codexModel = $event.target.value; onCodexModelChange()"
+                                    :disabled="codexStatus.loading || !codexModelOptions.length">
+                                <template x-for="model in codexModelOptions" :key="`pro-${model.value}`">
+                                    <option :value="model.value"
+                                            :selected="model.value === settings.codexModel"
+                                            x-text="model.label + (model.is_default ? ' (default)' : '')"></option>
+                                </template>
+                            </select>
+                            <div class="sidebar-hint" style="margin-top:3px"
+                                 x-text="codexModelHint(settings.codexModel)"></div>
+                        </div>
+                        <div class="setting-field">
+                            <label for="opt-codex-flash-model">Codex flash model</label>
+                            <select id="opt-codex-flash-model" :value="settings.codexFlashModel"
+                                    @change="settings.codexFlashModel = $event.target.value; onCodexModelChange()"
+                                    :disabled="codexStatus.loading || !codexModelOptions.length">
+                                <template x-for="model in codexModelOptions" :key="`flash-${model.value}`">
+                                    <option :value="model.value"
+                                            :selected="model.value === settings.codexFlashModel"
+                                            x-text="model.label + (model.is_default ? ' (default)' : '')"></option>
+                                </template>
+                            </select>
+                            <div class="sidebar-hint" style="margin-top:3px"
+                                 x-text="codexModelHint(settings.codexFlashModel)"></div>
+                        </div>
+                        <div class="action-row" style="align-items:center">
+                            <div class="sidebar-hint catalog-status" style="margin:0;flex:1"
+                                 :class="codexStatusClass" x-text="codexStatusText"></div>
+                            <button class="btn btn-ghost btn-sm" @click="refreshCodexStatus()"
+                                    :disabled="codexStatus.loading" title="Refresh Codex CLI status">
+                                <span x-text="codexStatus.loading ? 'Checking...' : 'Refresh'"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Models -->
+            <div class="sidebar-section" x-show="settings.llmBackend === 'litellm'">
                 <div class="sidebar-section-title" @click="drawerSections.models = !drawerSections.models">
                     <span>Models</span>
                     <span class="chevron" :class="drawerSections.models && 'open'"></span>
@@ -652,22 +732,11 @@
                                placeholder="Base URL (for custom endpoints)" style="margin-top:4px;font-size:0.82rem">
                     </div>
 
-                    <!-- Reasoning effort -->
-                    <div class="setting-field">
-                        <label for="opt-reasoning">Reasoning effort</label>
-                        <select id="opt-reasoning" x-model="settings.reasoningEffort">
-                            <option value="">Default</option>
-                            <option value="none">None</option>
-                            <option value="low">Low</option>
-                            <option value="medium">Medium</option>
-                            <option value="high">High</option>
-                        </select>
-                    </div>
                 </div>
             </div>
 
             <!-- API Keys -->
-            <div class="sidebar-section">
+            <div class="sidebar-section" x-show="settings.llmBackend === 'litellm'">
                 <div class="sidebar-section-title" @click="drawerSections.apiKeys = !drawerSections.apiKeys">
                     <span>API Keys</span>
                     <span class="chevron" :class="drawerSections.apiKeys && 'open'"></span>

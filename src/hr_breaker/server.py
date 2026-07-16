@@ -9,6 +9,7 @@ import subprocess
 import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse, JSONResponse
@@ -74,6 +75,10 @@ class ProviderOverride(BaseModel):
 
 
 class LLMOverrideRequest(BaseModel):
+    llm_backend: Literal["litellm", "codex_cli"] | None = None
+    codex_model: str | None = None
+    codex_flash_model: str | None = None
+    codex_reasoning_effort: str | None = None
     flash_model: str | None = None
     embedding_model: str | None = None
     reasoning_effort: str | None = None
@@ -103,6 +108,10 @@ class OptimizeRequest(BaseModel):
     max_iterations: int | None = None
     instructions: str | None = None
     # Per-run overrides (None = use server defaults)
+    llm_backend: Literal["litellm", "codex_cli"] | None = None
+    codex_model: str | None = None
+    codex_flash_model: str | None = None
+    codex_reasoning_effort: str | None = None
     pro_model: str | None = None
     flash_model: str | None = None
     embedding_model: str | None = None
@@ -136,7 +145,7 @@ class SynthesizeProfileRequest(ProfileActionRequest):
     selected_doc_ids: list[str] | None = None
 
 
-class AddNoteRequest(BaseModel):
+class AddNoteRequest(LLMOverrideRequest):
     title: str
     content: str
 
@@ -155,6 +164,10 @@ async def get_app_settings():
     return {
         "language_modes": LANGUAGE_MODES,
         "default_language": settings.default_language,
+        "llm_backend": settings.llm_backend,
+        "codex_model": settings.codex_model,
+        "codex_flash_model": settings.codex_flash_model,
+        "codex_reasoning_effort": settings.codex_reasoning_effort,
         "pro_model": settings.pro_model,
         "flash_model": settings.flash_model,
         "max_iterations": settings.max_iterations,
@@ -178,9 +191,35 @@ async def get_app_settings():
     }
 
 
+@app.get("/api/codex/status")
+async def get_codex_cli_status():
+    """Return local Codex installation/auth readiness without exposing credentials."""
+    from hr_breaker.services.codex_cli import get_codex_status
+
+    return await get_codex_status()
+
+
+@app.get("/api/codex/models")
+async def get_codex_cli_models():
+    """Return models exposed to the current ChatGPT-authenticated Codex CLI."""
+    from hr_breaker.services.codex_cli import CodexCLIError, get_codex_model_catalog
+
+    try:
+        return await get_codex_model_catalog()
+    except CodexCLIError as exc:
+        return JSONResponse(
+            status_code=503,
+            content={"models": [], "default_model": None, "error": str(exc)},
+        )
+
+
 @app.post("/api/resume/upload")
 async def upload_resume(
     file: UploadFile = File(...),
+    llm_backend: str | None = Form(None),
+    codex_model: str | None = Form(None),
+    codex_flash_model: str | None = Form(None),
+    codex_reasoning_effort: str | None = Form(None),
     flash_model: str | None = Form(None),
     reasoning_effort: str | None = Form(None),
     api_keys_json: str | None = Form(None),
@@ -193,7 +232,16 @@ async def upload_resume(
         return JSONResponse(status_code=400, content={"error": f"Failed to read file: {e}"})
 
     try:
-        req = _request_from_form(flash_model, reasoning_effort, api_keys_json, providers_json)
+        req = _request_from_form(
+            flash_model,
+            reasoning_effort,
+            api_keys_json,
+            providers_json,
+            llm_backend=llm_backend,
+            codex_model=codex_model,
+            codex_flash_model=codex_flash_model,
+            codex_reasoning_effort=codex_reasoning_effort,
+        )
         with settings_override(_build_overrides(req)):
             first_name, last_name, language_code = await extract_name(content)
     except ValueError as e:
@@ -368,6 +416,10 @@ async def list_profiles():
 async def quick_create_profile(
     file: UploadFile | None = File(None),
     content: str | None = Form(None),
+    llm_backend: str | None = Form(None),
+    codex_model: str | None = Form(None),
+    codex_flash_model: str | None = Form(None),
+    codex_reasoning_effort: str | None = Form(None),
     flash_model: str | None = Form(None),
     reasoning_effort: str | None = Form(None),
     api_keys_json: str | None = Form(None),
@@ -385,7 +437,16 @@ async def quick_create_profile(
     store = ProfileStore()
 
     try:
-        req = _request_from_form(flash_model, reasoning_effort, api_keys_json, providers_json)
+        req = _request_from_form(
+            flash_model,
+            reasoning_effort,
+            api_keys_json,
+            providers_json,
+            llm_backend=llm_backend,
+            codex_model=codex_model,
+            codex_flash_model=codex_flash_model,
+            codex_reasoning_effort=codex_reasoning_effort,
+        )
         overrides = _build_overrides(req)
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
@@ -511,6 +572,10 @@ async def get_profile(profile_id: str):
 async def add_profile_document(
     profile_id: str,
     file: UploadFile = File(...),
+    llm_backend: str | None = Form(None),
+    codex_model: str | None = Form(None),
+    codex_flash_model: str | None = Form(None),
+    codex_reasoning_effort: str | None = Form(None),
     flash_model: str | None = Form(None),
     reasoning_effort: str | None = Form(None),
     api_keys_json: str | None = Form(None),
@@ -530,7 +595,18 @@ async def add_profile_document(
         return JSONResponse(status_code=400, content={"error": f"Failed to read file: {e}"})
 
     try:
-        overrides = _build_overrides(_request_from_form(flash_model, reasoning_effort, api_keys_json, providers_json))
+        overrides = _build_overrides(
+            _request_from_form(
+                flash_model,
+                reasoning_effort,
+                api_keys_json,
+                providers_json,
+                llm_backend=llm_backend,
+                codex_model=codex_model,
+                codex_flash_model=codex_flash_model,
+                codex_reasoning_effort=codex_reasoning_effort,
+            )
+        )
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
     extraction_worker.submit(profile_id, [doc.id], overrides=overrides or None)
@@ -558,7 +634,8 @@ async def add_profile_note(profile_id: str, req: AddNoteRequest):
     if not store.get_profile(profile_id):
         raise HTTPException(status_code=404, detail="Profile not found")
     doc = store.add_note(profile_id, title=req.title.strip(), content_text=req.content.strip())
-    extraction_worker.submit(profile_id, [doc.id])
+    overrides = _build_overrides(req)
+    extraction_worker.submit(profile_id, [doc.id], overrides=overrides or None)
     return {"id": doc.id, "title": doc.title, "kind": doc.kind}
 
 
@@ -854,7 +931,17 @@ def _build_overrides(req: BaseModel | None) -> dict:
     """Build settings override dict from request fields."""
     data = req.model_dump(exclude_none=True) if req is not None else {}
     overrides: dict = {}
-    for field in ("pro_model", "flash_model", "embedding_model", "reasoning_effort", "api_keys"):
+    for field in (
+        "llm_backend",
+        "codex_model",
+        "codex_flash_model",
+        "codex_reasoning_effort",
+        "pro_model",
+        "flash_model",
+        "embedding_model",
+        "reasoning_effort",
+        "api_keys",
+    ):
         if field in data:
             overrides[field] = data[field]
     for scope, field_name in (
@@ -886,12 +973,24 @@ def _request_from_form(
     api_keys_json: str | None,
     providers_json: str | None,
     *,
+    llm_backend: str | None = None,
+    codex_model: str | None = None,
+    codex_flash_model: str | None = None,
+    codex_reasoning_effort: str | None = None,
     embedding_model: str | None = None,
     content: str | None = None,
     job_text: str | None = None,
     request_cls: type[LLMOverrideRequest] = ProfileActionRequest,
  ) -> LLMOverrideRequest:
     payload: dict = {}
+    if llm_backend:
+        payload["llm_backend"] = llm_backend
+    if codex_model:
+        payload["codex_model"] = codex_model
+    if codex_flash_model:
+        payload["codex_flash_model"] = codex_flash_model
+    if codex_reasoning_effort:
+        payload["codex_reasoning_effort"] = codex_reasoning_effort
     if flash_model:
         payload["flash_model"] = flash_model
     if embedding_model:

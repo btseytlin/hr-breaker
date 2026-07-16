@@ -6,7 +6,12 @@ import threading
 
 from litellm import aembedding as litellm_aembedding
 
-from hr_breaker.config import get_embedding_api_base, get_settings, has_api_key_for_model
+from hr_breaker.config import (
+    get_embedding_api_base,
+    get_settings,
+    has_api_key_for_model,
+    is_codex_cli_backend,
+)
 from hr_breaker.models.profile import ProfileDocument
 from hr_breaker.utils.retry import run_with_retry
 
@@ -32,6 +37,8 @@ def _normalize_text(value: str) -> str:
 
 def _has_embedding_api_key() -> bool:
     """Check if the configured embedding model has usable credentials."""
+    if is_codex_cli_backend():
+        return False
     return has_api_key_for_model(get_settings().embedding_model)
 
 

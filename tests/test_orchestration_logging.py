@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from hr_breaker.orchestration import (
     _optimization_settings_summary_lines,
@@ -17,12 +18,26 @@ def test_optimization_settings_summary_lines_are_concise_and_safe():
         cache_dir=".cache/resumes",
     )
 
-    lines = _optimization_settings_summary_lines(
-        settings,
-        max_iterations=1,
-        parallel=True,
-        no_shame=False,
-    )
+    with (
+        patch(
+            "hr_breaker.orchestration.runtime_model_summary_lines",
+            return_value=[
+                "Pro model: openai/gpt-5.4 / openai",
+                "Flash model: openai/gpt-5.3-codex / openai",
+                "Embedding model: gemini/gemini-embedding-2-preview / gemini",
+            ],
+        ),
+        patch(
+            "hr_breaker.orchestration.runtime_reasoning_effort",
+            return_value="medium",
+        ),
+    ):
+        lines = _optimization_settings_summary_lines(
+            settings,
+            max_iterations=1,
+            parallel=True,
+            no_shame=False,
+        )
 
     assert lines == [
         "Pro model: openai/gpt-5.4 / openai",

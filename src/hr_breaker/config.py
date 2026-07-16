@@ -4,10 +4,11 @@ import os
 import threading
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 from pydantic import AliasChoices, Field
+from pydantic_ai.models import Model
 from pydantic_ai_litellm import LiteLLMModel
 from pydantic_settings import BaseSettings
 
@@ -92,6 +93,14 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("EMBEDDING_OPENAI_API_BASE"),
     )
+
+    llm_backend: Literal["litellm", "codex_cli"] = "litellm"
+    codex_bin: str = "codex"
+    codex_model: str | None = None
+    codex_flash_model: str | None = None
+    codex_reasoning_effort: str | None = None
+    codex_timeout_seconds: float = Field(default=300.0, gt=0)
+    codex_max_concurrency: int = Field(default=1, ge=1, le=8)
 
     pro_model: str = "gemini/gemini-3-pro-preview"
     flash_model: str = "gemini/gemini-3-flash-preview"
@@ -181,6 +190,11 @@ def clear_settings_cache() -> None:
     get_settings.cache_clear()
 
 
+def is_codex_cli_backend() -> bool:
+    """Return whether chat tasks should use the signed-in local Codex CLI."""
+    return get_settings().llm_backend == "codex_cli"
+
+
 def required_api_key_env_for_model(model_name: str) -> str | None:
     if model_name.startswith("openrouter/"):
         return "OPENROUTER_API_KEY"
@@ -211,6 +225,20 @@ def has_api_key_for_model(model_name: str) -> bool:
     )
 
 
+def missing_api_key_for_chat_model(
+    scope: Literal["pro", "flash"],
+) -> tuple[str, str] | None:
+    """Return a missing provider API-key requirement for an active chat scope."""
+    if is_codex_cli_backend():
+        return None
+    settings = get_settings()
+    model_name = settings.pro_model if scope == "pro" else settings.flash_model
+    required_env = required_api_key_env_for_model(model_name)
+    if required_env and not has_api_key_for_model(model_name):
+        return model_name, required_env
+    return None
+
+
 def _litellm_api_base_for_model(scope: str, model_name: str) -> str | None:
     settings = get_settings()
     if not model_name.startswith("openai/"):
@@ -227,12 +255,16 @@ def _litellm_model(scope: str, model_name: str) -> LiteLLMModel:
     return LiteLLMModel(model_name=model_name, api_base=_litellm_api_base_for_model(scope, model_name))
 
 
-def get_pro_model() -> LiteLLMModel:
-    return _litellm_model("pro", get_settings().pro_model)
+def get_pro_model() -> Model:
+    from hr_breaker.services.llm_model import BackendModel
+
+    return BackendModel("pro")
 
 
-def get_flash_model() -> LiteLLMModel:
-    return _litellm_model("flash", get_settings().flash_model)
+def get_flash_model() -> Model:
+    from hr_breaker.services.llm_model import BackendModel
+
+    return BackendModel("flash")
 
 
 def get_embedding_api_base() -> str | None:
@@ -241,6 +273,10 @@ def get_embedding_api_base() -> str | None:
 
 
 _FIELD_ENV_MAP = {
+    "llm_backend": "LLM_BACKEND",
+    "codex_model": "CODEX_MODEL",
+    "codex_flash_model": "CODEX_FLASH_MODEL",
+    "codex_reasoning_effort": "CODEX_REASONING_EFFORT",
     "pro_model": "PRO_MODEL",
     "flash_model": "FLASH_MODEL",
     "embedding_model": "EMBEDDING_MODEL",
@@ -332,8 +368,13 @@ def get_model_settings() -> dict[str, Any] | None:
     settings = get_settings()
     model_settings: dict[str, Any] = {}
 
-    if settings.reasoning_effort and settings.reasoning_effort != "none":
-        model_settings["reasoning_effort"] = settings.reasoning_effort
+    reasoning_effort = (
+        settings.codex_reasoning_effort
+        if is_codex_cli_backend()
+        else settings.reasoning_effort
+    )
+    if reasoning_effort and reasoning_effort != "none":
+        model_settings["reasoning_effort"] = reasoning_effort
     if settings.max_tokens is not None:
         model_settings["max_tokens"] = settings.max_tokens
 

@@ -20,6 +20,32 @@ class TestSettingsOverride:
             assert config_module.get_settings().pro_model == "test/model-123"
         assert config_module.get_settings().pro_model == original
 
+    def test_codex_backend_override_restores_original(self):
+        original_backend = config_module.get_settings().llm_backend
+        original_model = config_module.get_settings().codex_model
+        original_flash_model = config_module.get_settings().codex_flash_model
+        original_reasoning = config_module.get_settings().codex_reasoning_effort
+        with config_module.settings_override(
+            {
+                "llm_backend": "codex_cli",
+                "codex_model": "test-codex-pro",
+                "codex_flash_model": "test-codex-flash",
+                "codex_reasoning_effort": "xhigh",
+            }
+        ):
+            settings = config_module.get_settings()
+            assert settings.llm_backend == "codex_cli"
+            assert settings.codex_model == "test-codex-pro"
+            assert settings.codex_flash_model == "test-codex-flash"
+            assert settings.codex_reasoning_effort == "xhigh"
+            assert config_module.get_model_settings()["reasoning_effort"] == "xhigh"
+            assert config_module.is_codex_cli_backend()
+        settings = config_module.get_settings()
+        assert settings.llm_backend == original_backend
+        assert settings.codex_model == original_model
+        assert settings.codex_flash_model == original_flash_model
+        assert settings.codex_reasoning_effort == original_reasoning
+
     def test_override_api_key(self):
         original = os.environ.get("OPENAI_API_KEY")
         with config_module.settings_override({"api_keys": {"openai": "sk-test-123"}}):
@@ -105,6 +131,17 @@ def test_max_tokens_from_env(monkeypatch):
         "reasoning_effort": config_module.get_settings().reasoning_effort,
         "max_tokens": 8192,
     }
+
+    config_module.get_settings.cache_clear()
+
+
+def test_codex_default_reasoning_does_not_inherit_litellm_setting(monkeypatch):
+    monkeypatch.setenv("LLM_BACKEND", "codex_cli")
+    monkeypatch.setenv("CODEX_REASONING_EFFORT", "")
+    monkeypatch.setenv("REASONING_EFFORT", "medium")
+    config_module.get_settings.cache_clear()
+
+    assert (config_module.get_model_settings() or {}).get("reasoning_effort") is None
 
     config_module.get_settings.cache_clear()
 

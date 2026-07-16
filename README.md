@@ -29,7 +29,7 @@ Resume optimization tool that transforms any resume into a job-specific, ATS-fri
 5. If filters reject, regenerates using feedback
 6. When all checks pass, renders HTML→PDF via WeasyPrint
 
-## Quick Start
+## Quick Start (API / LiteLLM — default)
 
 ```bash
 # Install
@@ -42,6 +42,37 @@ cp .env.example .env
 # Run web UI (auto-opens browser at http://localhost:8899)
 uv run hr-breaker serve
 ```
+
+### Codex CLI with a ChatGPT subscription
+
+For local use, HR-Breaker can run its text-generation requests through Codex CLI instead of a provider API. Install Codex CLI first, then sign in interactively and choose **Sign in with ChatGPT**:
+
+```bash
+npm install -g @openai/codex
+codex login
+```
+
+Configure HR-Breaker to use that signed-in CLI session:
+
+```bash
+cp .env.example .env
+
+# Add to .env:
+LLM_BACKEND=codex_cli
+CODEX_BIN=codex
+# CODEX_MODEL=                 # optional pro model; empty uses the Codex CLI default
+# CODEX_FLASH_MODEL=           # optional flash model; empty falls back to CODEX_MODEL
+CODEX_TIMEOUT_SECONDS=300
+CODEX_MAX_CONCURRENCY=1
+
+uv run hr-breaker serve
+```
+
+The Codex backend is intended for a local, single-user HR-Breaker process running under the same OS account that completed `codex login`. It uses the ChatGPT subscription session and does not silently fall back to LiteLLM or an API key if Codex is unavailable, logged out, rate-limited, or fails. Fix the Codex error or explicitly switch `LLM_BACKEND` back to `litellm`.
+
+The Web UI loads the visible model catalog from the signed-in local Codex CLI, selects that account's current default model initially, and lets pro and flash tasks use different models.
+
+Codex CLI does not provide embeddings. While `LLM_BACKEND=codex_cli` is active, semantic vector-similarity checks are skipped; the remaining lexical and validation filters still run.
 
 ## Usage
 
@@ -91,7 +122,9 @@ uv run hr-breaker list
 
 ## Configuration
 
-Copy `.env.example` to `.env` and set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`). Models are configurable via LiteLLM — any provider (OpenAI, Anthropic, Moonshot, etc.) works by setting `PRO_MODEL`, `FLASH_MODEL`, and the corresponding API key. To cap expensive responses, you can also set `MAX_TOKENS` (or the alias `MAX_OUTPUT_TOKENS`). See `.env.example` for all options.
+`LLM_BACKEND=litellm` is the default. Copy `.env.example` to `.env` and set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`). Models are configurable via LiteLLM — any provider (OpenAI, Anthropic, Moonshot, etc.) works by setting `PRO_MODEL`, `FLASH_MODEL`, and the corresponding API key. To cap expensive responses, you can also set `MAX_TOKENS` (or the alias `MAX_OUTPUT_TOKENS`).
+
+Set `LLM_BACKEND=codex_cli` to use the local Codex CLI session described above. `CODEX_BIN` selects the executable, `CODEX_MODEL` selects the pro model, and `CODEX_FLASH_MODEL` optionally selects a separate model for flash tasks (falling back to `CODEX_MODEL` when unset). `CODEX_REASONING_EFFORT` optionally overrides the selected models' own defaults. `CODEX_TIMEOUT_SECONDS` limits each request, and `CODEX_MAX_CONCURRENCY` limits simultaneous Codex processes. See `.env.example` for all options.
 
 ---
 

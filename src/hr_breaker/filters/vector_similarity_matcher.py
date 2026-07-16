@@ -1,6 +1,10 @@
 from litellm import aembedding as litellm_aembedding
 
-from hr_breaker.config import get_embedding_api_base, get_settings
+from hr_breaker.config import (
+    get_embedding_api_base,
+    get_settings,
+    is_codex_cli_backend,
+)
 from hr_breaker.filters.base import BaseFilter
 from hr_breaker.filters.registry import FilterRegistry
 from hr_breaker.models import FilterResult, JobPosting, OptimizedResume, ResumeSource
@@ -29,6 +33,17 @@ class VectorSimilarityMatcher(BaseFilter):
         source_language: Language | None = None,
     ) -> FilterResult:
         settings = get_settings()
+
+        if is_codex_cli_backend():
+            return FilterResult(
+                filter_name=self.name,
+                passed=True,
+                score=1.0,
+                threshold=self.threshold,
+                issues=[],
+                suggestions=[],
+                skipped=True,
+            )
 
         if optimized.pdf_text is None:
             return FilterResult(
